@@ -701,6 +701,7 @@
             <div id="txt-word" class="word-text" onclick="playWord(event)">Word</div>
             <div id="txt-meaning" class="meaning-text hidden">意味</div>
             <div id="txt-src" style="font-size:0.8rem; color:#999; margin-top:6px;"></div>
+            <button id="btn-edit-meaning" class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="editMeaning(null, event)" title="この単語の日本語訳を書き換える">✎ 訳を直す</button>
 
             <button id="btn-show-meaning" class="btn-neutral" style="margin-top:10px; font-size:0.85rem; padding:8px 18px; border-radius:20px;" onclick="revealMeaning()">
                 日本語訳を表示
@@ -2474,7 +2475,7 @@ function renderListTable() {
         }
         const tr = document.createElement('tr');
         tr.innerHTML = `<td>${item.n}</td>
-            <td><div style="font-weight:bold; color:var(--primary)">${item.w}</div><div style="font-size:0.8em; color:#666">${item.m}</div>${item.s ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
+            <td><div style="font-weight:bold; color:var(--primary)">${item.w}</div><div style="font-size:0.8em; color:#666">${String(item.m).replace(/[<>&]/g, '')} <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem" onclick="editMeaning(${item.n}, event)" title="日本語訳を書き換える">✎</button></div>${item.s ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
             <td style="text-align:center"><select onchange="updateLv(${item.n}, this.value)">
                 ${[0,1,2,3,4,5].map(v => `<option value="${v}" ${st.level==v?'selected':''}>${v}</option>`).join('')}
             </select></td>`;
@@ -2482,6 +2483,43 @@ function renderListTable() {
     });
     tbody.appendChild(fragment);
 }
+
+// 日本語訳を書き換える（n：番号。null なら今のカード）。
+// クラウドの最新の単語データに対して直す（英文リーダーで足した単語を消さないため）
+function editMeaning(n, e) {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    if (n === null || n === undefined) { const cur = studyQueue && studyQueue[currentIndex]; if (!cur) return; n = cur.n; }
+    const item = words.find(x => x.n === Number(n)); if (!item) return;
+    const v = prompt('「' + item.w + '」の日本語訳', item.m);
+    if (v === null) return;
+    const nm = v.replace(/[\t\r\n]+/g, ' ').trim();
+    if (!nm || nm === item.m) return;
+    const patch = (tsv) => {
+        const lines = String(tsv || '').replace(/\s+$/, '').split('\n'); let hit = false;
+        for (let i = 0; i < lines.length; i++) { const p = lines[i].split('\t'); if (p.length >= 3 && parseInt(p[2], 10) === Number(n)) { p[1] = nm; lines[i] = p.join('\t'); hit = true; } }
+        return hit ? lines.join('\n') : null;
+    };
+    const finish = (tsv) => {
+        if (!tsv) { alert('その単語が見つかりませんでした。'); return; }
+        masterTsv = tsv; lsSet('master_tsv', masterTsv);
+        document.getElementById('data-editor').value = masterTsv.trim();
+        parseData();
+        if (studyQueue) studyQueue.forEach(q => { if (q.n === Number(n)) q.m = nm; });
+        const cur = studyQueue && studyQueue[currentIndex];
+        if (cur && cur.n === Number(n)) document.getElementById('txt-meaning').innerText = nm;
+        if (document.getElementById('screen-list').classList.contains('active')) renderListTable();
+        if (cloudKey()) cloudPush(function (err) { if (err) alert('端末には保存しましたが、クラウドへの保存に失敗しました（' + cloudErrText(err) + '）。'); });
+    };
+    const key = cloudKey();
+    if (!key) { finish(patch(masterTsv)); return; }
+    cloudReq('GET', '/memos/' + key + '/' + CLOUD_NODE + '/words', undefined, function (err, w) {
+        finish(patch(!err && typeof w === 'string' && w.trim() ? w : masterTsv));
+    });
+}
+(function () {
+    const b = document.getElementById('btn-edit-meaning'), stop = (e) => { e.stopPropagation(); };
+    if (b) { b.addEventListener('pointerdown', stop, { passive: true }); b.addEventListener('touchstart', stop, { passive: true }); }
+})();
 
 function updateLv(n, lv) {
     const st = getStatus(n);
