@@ -675,6 +675,7 @@
         <button class="btn-primary btn-block" onclick="startApp('card')">フラッシュカード開始</button>
         <button class="btn-secondary btn-block" onclick="startApp('listen')">聞き流しモード開始</button>
 
+        <button class="btn-neutral btn-block" onclick="openAddWords()">＋ 単語を追加（英単語だけ入れれば訳は自動）</button>
         <button class="btn-neutral btn-block" onclick="showList()">学習データ一覧 / 管理</button>
         <div style="text-align:center; font-size:0.85rem; color:#999; margin-top:5px;">
             登録数: <span id="totalCount">-</span>語
@@ -2521,6 +2522,143 @@ function editMeaning(n, e) {
     if (b) { b.addEventListener('pointerdown', stop, { passive: true }); b.addEventListener('touchstart', stop, { passive: true }); }
 })();
 
+// ===== 単語を追加（英単語だけ入れれば、英文リーダーと同じ英和辞書で訳を入れる） =====
+const DICT_BASE = '/eibun-reader/vendor/ejdict/';
+const dictCache = {};
+let phraseList = null;
+function dictLetter(ch, cb) {
+    ch = /^[a-z]$/.test(ch) ? ch : '';
+    if (!ch) { cb({}); return; }
+    if (dictCache[ch]) { cb(dictCache[ch]); return; }
+    fetch(DICT_BASE + ch + '.txt').then(r => r.ok ? r.text() : '').then(t => {
+        const map = {};
+        String(t || '').split('\n').forEach(line => { const i = line.indexOf('\t'); if (i > 0) { const k = line.slice(0, i).toLowerCase(); if (!map[k]) map[k] = line.slice(i + 1); } });
+        dictCache[ch] = map; cb(map);
+    }).catch(() => cb({}));
+}
+function dictPhrases(cb) {
+    if (phraseList) { cb(phraseList); return; }
+    fetch(DICT_BASE + 'phrases.json').then(r => r.ok ? r.json() : []).then(a => { phraseList = {}; (a || []).forEach(p => { const k = String(p[0]).toLowerCase(); if (!phraseList[k]) phraseList[k] = p[2] ? p[1] : cleanMeanK(p[1]); }); cb(phraseList); }).catch(() => { phraseList = {}; cb(phraseList); });
+}
+function cleanMeanK(m) {
+    m = String(m || '').replace(/『|』/g, '').replace(/\s*\/\s*/g, ' / ');
+    const out = [];
+    m.split(' / ').forEach(p => { p = p.replace(/《[^》]*》/g, '').replace(/^[\s・]+|\s+$/g, ''); if (p && p.length > 1 && out.length < 3) out.push(p); });
+    const s = out.join('、') || m;
+    return s.length > 70 ? s.slice(0, 70) + '…' : s;
+}
+function lemmasK(w) {
+    const out = [w], add = x => { if (x && x.length > 1 && out.indexOf(x) < 0) out.push(x); };
+    if (/ies$/.test(w)) add(w.slice(0, -3) + 'y');
+    if (/(ches|shes|sses|xes|zes|oes)$/.test(w)) add(w.slice(0, -2));
+    if (/s$/.test(w) && !/ss$/.test(w)) add(w.slice(0, -1));
+    if (/ied$/.test(w)) add(w.slice(0, -3) + 'y');
+    if (/ed$/.test(w)) { add(w.slice(0, -2)); add(w.slice(0, -1)); if (/([b-df-hj-np-tv-z])\1ed$/.test(w)) add(w.slice(0, -3)); }
+    if (/ing$/.test(w)) { add(w.slice(0, -3)); add(w.slice(0, -3) + 'e'); if (/([b-df-hj-np-tv-z])\1ing$/.test(w)) add(w.slice(0, -4)); }
+    if (/ly$/.test(w)) add(w.slice(0, -2));
+    return out;
+}
+function dictLookup(word, cb) {
+    const w = word.toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, ' ').trim();
+    if (/ /.test(w)) {   // 熟語：熟語の辞書 → 英和辞書（"run out" のような見出しもある）
+        dictPhrases(pl => {
+            if (pl[w]) { cb(pl[w]); return; }
+            const alt = w.replace(/\b(someone|somebody|something|sb|sth)\b/g, '～');
+            if (pl[alt]) { cb(pl[alt]); return; }
+            dictLetter(w.charAt(0), map => cb(map[w] ? cleanMeanK(map[w]) : ''));
+        });
+        return;
+    }
+    dictLetter(w.charAt(0), map => {
+        const c = lemmasK(w);
+        for (let i = 0; i < c.length; i++) if (map[c[i]]) { cb(cleanMeanK(map[c[i]]) + (i ? '（' + c[i] + '）' : '')); return; }
+        cb('');
+    });
+}
+// 辞書にない語は、英文リーダーと同じ Apps Script で訳す（設定してあれば）
+const GAS_LS = 'eibun_gas';
+function gasTranslate(text, cb) {
+    let url = ''; try { url = localStorage.getItem(GAS_LS) || ''; } catch (e) {}
+    const key = cloudKey();
+    if (!url || !/^https:\/\//.test(url) || !window.crypto || !crypto.subtle || !window.TextEncoder) { cb(''); return; }
+    const go = (tk) => {
+        const u = url + (url.indexOf('?') >= 0 ? '&' : '?') + (tk ? 'tk=' + tk + '&' : '') + 'q=' + encodeURIComponent(text);
+        fetch(u).then(r => r.json()).then(d => cb(d && d.ok && d.t ? String(d.t) : '')).catch(() => cb(''));
+    };
+    if (!key) { go(''); return; }
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode('tegaki-gas|' + key)).then(h => {
+        go(Array.prototype.map.call(new Uint8Array(h), b => ('0' + b.toString(16)).slice(-2)).join('').slice(0, 32));
+    }).catch(() => go(''));
+}
+let addRows = [];
+function openAddWords() { document.getElementById('add-dlg').style.display = 'block'; document.getElementById('add-msg').textContent = ''; setTimeout(() => { try { document.getElementById('add-in').focus(); } catch (e) {} }, 50); }
+function closeAddWords() { document.getElementById('add-dlg').style.display = 'none'; }
+function addLookup() {
+    const raw = document.getElementById('add-in').value;
+    const have = {}; words.forEach(x => { have[String(x.w).toLowerCase()] = 1; });
+    const seen = {}, list = [];
+    raw.split(/[\n,，、;]+/).forEach(t => { t = t.replace(/^[\s"'“”‘’・\-\d.)]+|[\s"'“”‘’.!?]+$/g, '').replace(/\s+/g, ' '); if (!t || !/[A-Za-z]/.test(t) || t.length > 60) return; const k = t.toLowerCase(); if (seen[k]) return; seen[k] = 1; list.push(t); });
+    const box = document.getElementById('add-list'), msg = document.getElementById('add-msg');
+    box.innerHTML = ''; addRows = []; document.getElementById('add-go-row').style.display = 'none';
+    if (!list.length) { msg.textContent = '英単語が見つかりませんでした。'; return; }
+    msg.textContent = '辞書で調べています…';
+    let left = list.length, dup = 0;
+    list.forEach((w, i) => {
+        const isDup = !!have[w.toLowerCase()]; if (isDup) dup++;
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; gap:6px; align-items:center; margin:4px 0; padding:4px 0; border-bottom:1px solid #eee;';
+        const ck = document.createElement('input'); ck.type = 'checkbox'; ck.checked = !isDup;
+        const lb = document.createElement('div'); lb.style.cssText = 'min-width:30%; font-weight:bold; color:var(--primary); word-break:break-word;'; lb.textContent = w + (isDup ? '（登録済み）' : '');
+        const inp = document.createElement('input'); inp.type = 'text'; inp.placeholder = '日本語訳（入力してください）'; inp.style.cssText = 'flex:1; min-width:0; font-size:15px; padding:6px; border:1px solid #ccc; border-radius:6px;';
+        row.appendChild(ck); row.appendChild(lb); row.appendChild(inp); box.appendChild(row);
+        addRows[i] = { w: w, ck: ck, inp: inp };
+        dictLookup(w, m0 => {
+          const fill = (m, viaTr) => {
+            inp.value = m || ''; if (m && viaTr) inp.title = '辞書になかったので、翻訳で入れました';
+            if (!m) inp.style.borderColor = '#e0a000';
+            if (--left === 0) {
+                const miss = addRows.filter(r => !r.inp.value).length;
+                msg.textContent = list.length + ' 語を調べました。' + (miss ? '辞書になかった ' + miss + ' 語は、訳を入れてください（黄色の枠）。' : '') + (dup ? '登録済みの ' + dup + ' 語は、チェックを外してあります。' : '') + '訳は書き換えられます。';
+                document.getElementById('add-go-row').style.display = 'block';
+            }
+          };
+          if (m0) fill(m0, false); else gasTranslate(w, t => fill(t, true));
+        });
+    });
+}
+function addCommit() {
+    const pick = addRows.filter(r => r && r.ck.checked);
+    if (!pick.length) { alert('追加する単語にチェックを入れてください。'); return; }
+    const noMean = pick.filter(r => !r.inp.value.trim());
+    if (noMean.length && !confirm('訳が空の単語が ' + noMean.length + ' 語あります。訳なしで追加しますか？（あとで ✎ で直せます）')) return;
+    const clean = t => String(t || '').replace(/[\t\r\n]+/g, ' ').trim();
+    const apply = (tsv) => {
+        const lines = String(tsv || '').replace(/\s+$/, '').split('\n').filter(l => l.trim());
+        let maxN = 0; const have = {};
+        lines.forEach(l => { const p = l.split('\t'); const n = parseInt(p[2], 10); if (n > maxN) maxN = n; if (p[0]) have[p[0].trim().toLowerCase()] = 1; });
+        let added = 0;
+        pick.forEach(r => { if (have[r.w.toLowerCase()]) return; have[r.w.toLowerCase()] = 1; maxN++; added++; lines.push(clean(r.w) + '\t' + (clean(r.inp.value) || '（訳なし）') + '\t' + maxN + '\t手入力'); });
+        return { tsv: lines.join('\n'), added: added };
+    };
+    const finish = (res) => {
+        masterTsv = res.tsv; lsSet('master_tsv', masterTsv);
+        document.getElementById('data-editor').value = masterTsv.trim();
+        parseData(); refreshMainStats();
+        const done = (err) => {
+            document.getElementById('add-msg').textContent = res.added + ' 語を追加しました。' + (err ? '（クラウドへの保存に失敗：' + cloudErrText(err) + '）' : '');
+            document.getElementById('add-list').innerHTML = ''; document.getElementById('add-go-row').style.display = 'none'; addRows = [];
+            document.getElementById('add-in').value = '';
+        };
+        if (cloudKey()) cloudPush(done); else done(null);
+    };
+    const key = cloudKey();
+    if (!key) { finish(apply(masterTsv)); return; }
+    document.getElementById('add-msg').textContent = '追加しています…';
+    cloudReq('GET', '/memos/' + key + '/' + CLOUD_NODE + '/words', undefined, function (err, w) {
+        finish(apply(!err && typeof w === 'string' && w.trim() ? w : masterTsv));
+    });
+}
+
 function updateLv(n, lv) {
     const st = getStatus(n);
     st.level = parseInt(lv);
@@ -2824,5 +2962,16 @@ if ("serviceWorker" in navigator) {
   window.PinLock = { lock: lock, setup: startSet, menu: menu, ticket: ticket, pass: usePass };
 })();
 </script>
+<div id="add-dlg" style="display:none; position:fixed; inset:0; background:rgba(20,28,32,.45); z-index:200;">
+  <div style="position:absolute; left:3%; right:3%; top:4%; max-width:560px; margin:0 auto; background:#fff; border-radius:14px; padding:14px; box-sizing:border-box; max-height:92%; overflow-y:auto; -webkit-overflow-scrolling:touch;">
+    <h3 style="margin:0 0 6px; font-size:1.05rem;">＋ 単語を追加</h3>
+    <div style="font-size:0.82rem; color:#666; line-height:1.5; margin-bottom:6px;">英単語・熟語を1行に1つ（またはカンマ区切り）で入れて「訳を調べる」を押すと、辞書で日本語訳を入れます。訳は追加する前に直せます。</div>
+    <textarea id="add-in" rows="5" placeholder="例：&#10;meticulous&#10;par for the course&#10;run out of" style="width:100%; box-sizing:border-box; font-size:16px; padding:8px; border:1px solid #ccc; border-radius:8px;"></textarea>
+    <div style="margin:8px 0; display:flex; gap:6px; flex-wrap:wrap;"><button class="btn-primary" style="padding:8px 14px" onclick="addLookup()">訳を調べる</button> <button class="btn-neutral" style="padding:8px 14px" onclick="closeAddWords()">閉じる</button></div>
+    <div id="add-msg" style="font-size:0.85rem; color:#555; margin:4px 0;"></div>
+    <div id="add-list"></div>
+    <div id="add-go-row" style="display:none; margin-top:8px;"><button class="btn-primary btn-block" onclick="addCommit()">この内容で追加する</button></div>
+  </div>
+</div>
 </body>
 </html>
