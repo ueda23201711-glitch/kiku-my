@@ -792,9 +792,27 @@
                 <option value="new">未回答のみ</option>
             </select>
         </div>
+        <div id="sel-bar" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 8px;">
+            <button class="tool-btn" style="padding:6px 10px" onclick="selAll(true)">☑ 表示中を全選択</button>
+            <button class="tool-btn" style="padding:6px 10px" onclick="selAll(false)">☐ 選択を解除</button>
+            <span id="sel-n" style="font-size:0.85rem; color:#666;">0 語を選択</span>
+            <button class="tool-btn" style="padding:6px 10px" onclick="exportCsv()">⬇ CSV で書き出す</button>
+            <button class="tool-btn" style="padding:6px 10px" onclick="openPrompt()">🤖 勉強用の英文を作るプロンプト</button>
+        </div>
+        <div id="prompt-box" style="display:none; background:#fff; border:1px solid #ddd; border-radius:10px; padding:10px; margin:0 0 10px;">
+            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px;">
+                <select id="pr-style" onchange="buildPrompt()"><option value="story">物語</option><option value="dialog">会話</option><option value="news">ニュース記事</option><option value="email">ビジネスメール</option><option value="essay">エッセイ</option></select>
+                <select id="pr-len" onchange="buildPrompt()"><option value="300">短め（約300語）</option><option value="600" selected>ふつう（約600語）</option><option value="1000">長め（約1000語）</option></select>
+                <select id="pr-lv" onchange="buildPrompt()"><option value="B1">やさしめ（CEFR B1）</option><option value="B2" selected>中級（CEFR B2）</option><option value="C1">上級（CEFR C1）</option></select>
+                <select id="pr-rep" onchange="buildPrompt()"><option value="1">各語1回以上</option><option value="2" selected>各語2回以上</option><option value="3">各語3回以上</option></select>
+            </div>
+            <textarea id="pr-text" rows="9" readonly style="width:100%; box-sizing:border-box; font-size:13px;"></textarea>
+            <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;"><button class="btn-primary" style="padding:6px 14px" onclick="copyPrompt()">📋 コピー</button> <button class="btn-neutral" style="padding:6px 14px" onclick="document.getElementById('prompt-box').style.display='none'">閉じる</button> <span id="pr-msg" style="font-size:0.85rem; color:#666;"></span></div>
+            <div style="font-size:0.78rem; color:#777; margin-top:6px; line-height:1.5;">コピーして ChatGPT・Claude・Gemini などに貼り付けます。できた英文を英文リーダーに貼り付けて読み込むと、選んだ単語が黄色（My単語帳に保存済み）で表示されます。</div>
+        </div>
         <div class="table-container">
             <table id="list-table">
-                <thead><tr><th>No</th><th>単語 / 意味</th><th style="text-align:center">LV</th></tr></thead>
+                <thead><tr><th style="width:28px"></th><th>No</th><th>単語 / 意味</th><th style="text-align:center">LV</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -2464,6 +2482,7 @@ function renderListTable() {
     const filterResult = document.getElementById('selListResultFilter').value;
     const filterSrc = document.getElementById('selListSrc') ? document.getElementById('selListSrc').value : '';
     tbody.innerHTML = '';
+    listShown = [];
     const fragment = document.createDocumentFragment();
 
     words.forEach(item => {
@@ -2475,7 +2494,8 @@ function renderListTable() {
             if (filterResult === 'new' && st.result !== 'new') return;
         }
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${item.n}</td>
+        listShown.push(item.n);
+        tr.innerHTML = `<td><input type="checkbox" ${listSel[item.n] ? 'checked' : ''} onclick="selOne(${item.n}, this.checked)" style="width:20px; height:20px;"></td><td>${item.n}</td>
             <td><div style="font-weight:bold; color:var(--primary)">${item.w}</div><div style="font-size:0.8em; color:#666">${String(item.m).replace(/[<>&]/g, '')} <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem" onclick="editMeaning(${item.n}, event)" title="日本語訳を書き換える">✎</button></div>${item.s ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
             <td style="text-align:center"><select onchange="updateLv(${item.n}, this.value)">
                 ${[0,1,2,3,4,5].map(v => `<option value="${v}" ${st.level==v?'selected':''}>${v}</option>`).join('')}
@@ -2657,6 +2677,53 @@ function addCommit() {
     cloudReq('GET', '/memos/' + key + '/' + CLOUD_NODE + '/words', undefined, function (err, w) {
         finish(apply(!err && typeof w === 'string' && w.trim() ? w : masterTsv));
     });
+}
+
+// ===== 選んだ単語を CSV に書き出す・勉強用の英文を作る LLM 用のプロンプト =====
+let listSel = {}, listShown = [];
+function selCount() { let n = 0; words.forEach(w => { if (listSel[w.n]) n++; }); return n; }
+function selShow() { const el = document.getElementById('sel-n'); if (el) el.textContent = selCount() + ' 語を選択'; if (document.getElementById('prompt-box').style.display !== 'none') buildPrompt(); }
+function selOne(n, on) { if (on) listSel[n] = 1; else delete listSel[n]; selShow(); }
+function selAll(on) { if (on) listShown.forEach(n => { listSel[n] = 1; }); else listSel = {}; renderListTable(); selShow(); }
+function selWords() { return words.filter(w => listSel[w.n]); }
+function exportCsv() {
+    const list = selWords();
+    if (!list.length) { alert('書き出す単語を選んでください（「表示中を全選択」も使えます）。'); return; }
+    const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const rows = [['No', 'word', 'meaning', 'level', 'source'].join(',')];
+    list.forEach(w => { const st = getStatus(w.n); rows.push([w.n, q(w.w), q(w.m), st.level || 0, q(w.s || '')].join(',')); });
+    const blob = new Blob(['\ufeff' + rows.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' });
+    const d = new Date(), pad = x => ('0' + x).slice(-2);
+    const name = 'MyVocab_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + list.length + 'words.csv';
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+function buildPrompt() {
+    const list = selWords(), ta = document.getElementById('pr-text');
+    if (!list.length) { ta.value = '（単語を選ぶと、ここにプロンプトができます）'; return; }
+    const style = { story: 'a short story', dialog: 'a natural conversation between two or three people (write each line as "Name: ...")', news: 'a news article', email: 'a business email exchange', essay: 'an opinion essay' }[document.getElementById('pr-style').value];
+    const len = document.getElementById('pr-len').value, lv = document.getElementById('pr-lv').value, rep = document.getElementById('pr-rep').value;
+    const wl = list.map(w => '- ' + w.w + '（' + String(w.m).replace(/\s+/g, ' ').slice(0, 40) + '）').join('\n');
+    ta.value = 'Write ' + style + ' in English for an English learner (CEFR ' + lv + ' level), about ' + len + ' words long.\n'
+        + 'Use every word or phrase in the list below naturally, at least ' + rep + ' time(s) each, in contexts that make its meaning clear. '
+        + 'You may change the word form (e.g. tense, plural) when needed.\n\n'
+        + 'Output rules:\n'
+        + '- First line: a short title only.\n'
+        + '- Then the text in plain English. No Japanese, no translations, no bold, no markdown, no bullet points, no word lists, no explanations.\n'
+        + '- Use normal paragraphs and complete sentences ending with a period, question mark or exclamation mark.\n\n'
+        + 'Words and phrases to use (' + list.length + '):\n' + wl + '\n';
+}
+function openPrompt() {
+    if (!selCount()) { alert('英文に使う単語を選んでください（「表示中を全選択」も使えます）。'); return; }
+    if (selCount() > 40 && !confirm(selCount() + ' 語を選んでいます。1つの英文に入れるには多いので、15〜30 語くらいがおすすめです。このまま作りますか？')) return;
+    document.getElementById('prompt-box').style.display = 'block'; document.getElementById('pr-msg').textContent = '';
+    buildPrompt();
+}
+function copyPrompt() {
+    const ta = document.getElementById('pr-text'), msg = document.getElementById('pr-msg');
+    const ok = () => { msg.textContent = 'コピーしました。'; };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(ok, () => { ta.select(); try { document.execCommand('copy'); ok(); } catch (e) { msg.textContent = '長押しで全選択してコピーしてください。'; } });
+    else { ta.removeAttribute('readonly'); ta.select(); try { document.execCommand('copy'); ok(); } catch (e) {} ta.setAttribute('readonly', ''); }
 }
 
 function updateLv(n, lv) {
