@@ -677,6 +677,7 @@
 
         <button class="btn-neutral btn-block" onclick="openAddWords()">＋ 単語を追加（英単語だけ入れれば訳は自動）</button>
         <button class="btn-neutral btn-block" onclick="showList()">学習データ一覧 / 管理</button>
+        <button class="btn-neutral btn-block" onclick="showSrcList()">📚 本・英文ごとの単語一覧</button>
         <div style="text-align:center; font-size:0.85rem; color:#999; margin-top:5px;">
             登録数: <span id="totalCount">-</span>語
         </div>
@@ -1115,6 +1116,7 @@ function renderSrcOptions() {
         const cur = i === 0 ? keep : el.value;
         el.innerHTML = '';
         const o0 = document.createElement('option'); o0.value = ''; o0.textContent = i === 0 ? 'すべての本・英文の単語' : '全部の本・英文'; el.appendChild(o0);
+        if (i === 1) { const og = document.createElement('option'); og.value = '__group__'; og.textContent = '📚 本・英文ごとにまとめて表示'; el.appendChild(og); }
         const none = words.filter(w => !w.s).length;
         list.forEach(x => { const o = document.createElement('option'); o.value = x.s; o.textContent = '📚 ' + x.s + '（' + x.c + '語）'; el.appendChild(o); });
         if (none) { const o = document.createElement('option'); o.value = '__none__'; o.textContent = '（どこから保存したか分からない単語 ' + none + '語）'; el.appendChild(o); }
@@ -1122,7 +1124,7 @@ function renderSrcOptions() {
     });
     srcNote();
 }
-function srcMatch(item, v) { return !v || (v === '__none__' ? !item.s : item.s === v); }
+function srcMatch(item, v) { return !v || v === '__group__' || (v === '__none__' ? !item.s : item.s === v); }
 function srcNote() {
     const v = document.getElementById('selSrc').value, note = document.getElementById('src-note');
     if (!v) { note.textContent = ''; return; }
@@ -2471,6 +2473,12 @@ function clearAllNotes(e){
 }
 
 /* ===== List screen ===== */
+function showSrcList() {
+    showScreen('screen-list');
+    const s = document.getElementById('selListSrc');
+    if (s) { s.className = ''; if (![...s.options].some(o => o.value === '__group__')) { const og = document.createElement('option'); og.value = '__group__'; og.textContent = '📚 本・英文ごとにまとめて表示'; s.insertBefore(og, s.options[1] || null); } s.value = '__group__'; }
+    renderListTable();
+}
 function showList() {
     showScreen('screen-list');
     renderListTable();
@@ -2484,14 +2492,30 @@ function renderListTable() {
     tbody.innerHTML = '';
     listShown = [];
     const fragment = document.createDocumentFragment();
+    // 本・英文ごとにまとめる：新しく保存した本から順に、見出しを付けて並べる
+    const grouped = filterSrc === '__group__';
+    let order = words;
+    if (grouped) {
+        const rank = {}; srcList().forEach((x, i) => { rank[x.s] = i; });
+        order = words.slice().sort((a, b) => { const ra = a.s ? (rank[a.s] !== undefined ? rank[a.s] : 9999) : 10000, rb = b.s ? (rank[b.s] !== undefined ? rank[b.s] : 9999) : 10000; return ra - rb || a.n - b.n; });
+    }
+    let lastGrp = null;
+    const grpCount = {}; if (grouped) words.forEach(w => { const g = w.s || ''; grpCount[g] = (grpCount[g] || 0) + 1; });
 
-    words.forEach(item => {
+    order.forEach(item => {
         const st = getStatus(item.n);
         if (!srcMatch(item, filterSrc)) return;
         if (filterLv !== 'all' && String(st.level) !== filterLv) return;
         if (filterResult !== 'all') {
             if (filterResult === 'unknown' && st.result !== 'unknown') return;
             if (filterResult === 'new' && st.result !== 'new') return;
+        }
+        if (grouped && (item.s || '') !== lastGrp) {
+            lastGrp = item.s || '';
+            const g = lastGrp, hr = document.createElement('tr');
+            hr.innerHTML = `<td colspan="4" style="background:#f3efe9; font-weight:bold; padding:8px 6px;">📚 ${(g || '（どこから保存したか分からない単語）').replace(/[<>&]/g, '')}　<span style="font-weight:normal; color:#777; font-size:0.85em">${grpCount[g]}語</span> <button class="tool-btn" style="padding:2px 8px; font-size:0.75rem; margin-left:6px">☑ この本の単語を選ぶ</button></td>`;
+            hr.querySelector('button').onclick = (e) => { e.stopPropagation(); words.forEach(w => { if ((w.s || '') === g) listSel[w.n] = 1; }); renderListTable(); selShow(); };
+            fragment.appendChild(hr);
         }
         const tr = document.createElement('tr');
         listShown.push(item.n);
