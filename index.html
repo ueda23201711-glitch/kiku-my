@@ -95,6 +95,9 @@
     .level-btn { width: 36px; height: 36px; border-radius: 50%; border: 2px solid #ced4da; background: white; color: #666; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; }
     .level-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
 
+    #list-table td { padding-top: 6px; padding-bottom: 6px; }
+    #screen-list .table-container { flex: none; overflow: visible; }   /* 一覧は画面ごとスクロール（枠の中だけで狭くスクロールしない） */
+    #list-table .lm { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .table-container { flex: 1; overflow-y: auto; background: white; border-radius: 12px; border: 1px solid #eee; }
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     th { position: sticky; top: 0; background: #f8f9fa; z-index: 1; padding: 10px; text-align: left; border-bottom: 2px solid #dee2e6; }
@@ -817,11 +820,12 @@
                 <tbody></tbody>
             </table>
         </div>
-        <div class="panel" style="margin-top:10px;">
+        <details class="panel" style="margin-top:10px;">
+            <summary style="cursor:pointer; font-size:0.9rem; color:#666; padding:4px 0;">📝 データを直接編集（TAB 区切り）・全データ初期化</summary>
             <textarea id="data-editor" placeholder="word	meaning	number (TAB区切り)"></textarea>
             <button class="btn-secondary btn-block" onclick="updateMasterData()">データを更新保存</button>
             <button class="btn-danger btn-block" onclick="resetAllData()">⚠ 全データ初期化</button>
-        </div>
+        </details>
         <button class="btn-primary btn-block" onclick="goHome()">設定に戻る</button>
     </div>
 
@@ -2520,7 +2524,7 @@ function renderListTable() {
         const tr = document.createElement('tr');
         listShown.push(item.n);
         tr.innerHTML = `<td><input type="checkbox" ${listSel[item.n] ? 'checked' : ''} onclick="selOne(${item.n}, this.checked)" style="width:20px; height:20px;"></td><td>${item.n}</td>
-            <td><div style="font-weight:bold; color:var(--primary)">${item.w}</div><div style="font-size:0.8em; color:#666">${String(item.m).replace(/[<>&]/g, '')} <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem" onclick="editMeaning(${item.n}, event)" title="日本語訳を書き換える">✎</button></div>${item.s ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
+            <td><div style="font-weight:bold; color:var(--primary)">${item.w} <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="editMeaning(${item.n}, event)" title="日本語訳を書き換える">✎ 訳</button></div><div class="lm" style="font-size:0.8em; color:#666">${String(item.m).replace(/[<>&]/g, '')}</div>${item.s && !grouped ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
             <td style="text-align:center"><select onchange="updateLv(${item.n}, this.value)">
                 ${[0,1,2,3,4,5].map(v => `<option value="${v}" ${st.level==v?'selected':''}>${v}</option>`).join('')}
             </select></td>`;
