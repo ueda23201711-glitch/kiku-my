@@ -2533,6 +2533,26 @@ function renderListTable() {
     tbody.appendChild(fragment);
 }
 
+// ===== 元に戻す（Ctrl＋Z・Mac は ⌘＋Z）：訳の修正・単語の追加 =====
+const tsvUndo = [];
+function tsvUndoPush(label) { tsvUndo.push({ tsv: masterTsv, label: label }); if (tsvUndo.length > 20) tsvUndo.shift(); }
+function tsvUndoDo() {
+    const u = tsvUndo.pop();
+    if (!u) { alert('もう戻せる操作はありません。'); return; }
+    if (!confirm('「' + u.label + '」を元に戻しますか？')) { tsvUndo.push(u); return; }
+    masterTsv = u.tsv; lsSet('master_tsv', masterTsv);
+    document.getElementById('data-editor').value = masterTsv.trim();
+    parseData(); refreshMainStats();
+    if (document.getElementById('screen-list').classList.contains('active')) renderListTable();
+    if (cloudKey()) cloudPush(function (err) { if (err) alert('端末では戻しましたが、クラウドへの保存に失敗しました（' + cloudErrText(err) + '）。'); });
+}
+document.addEventListener('keydown', function (e) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    const t = e.target, n = t && t.tagName;
+    if (n === 'INPUT' || n === 'TEXTAREA' || n === 'SELECT' || (t && t.isContentEditable)) return;   // 入力中は、ふつうの「元に戻す」
+    if (String(e.key || '').toLowerCase() === 'z') { e.preventDefault(); tsvUndoDo(); }
+});
+
 // 日本語訳を書き換える（n：番号。null なら今のカード）。
 // クラウドの最新の単語データに対して直す（英文リーダーで足した単語を消さないため）
 function editMeaning(n, e) {
@@ -2550,6 +2570,7 @@ function editMeaning(n, e) {
     };
     const finish = (tsv) => {
         if (!tsv) { alert('その単語が見つかりませんでした。'); return; }
+        tsvUndoPush('訳の修正');
         masterTsv = tsv; lsSet('master_tsv', masterTsv);
         document.getElementById('data-editor').value = masterTsv.trim();
         parseData();
@@ -2689,6 +2710,7 @@ function addCommit() {
         return { tsv: lines.join('\n'), added: added };
     };
     const finish = (res) => {
+        tsvUndoPush('単語の追加');
         masterTsv = res.tsv; lsSet('master_tsv', masterTsv);
         document.getElementById('data-editor').value = masterTsv.trim();
         parseData(); refreshMainStats();
