@@ -690,7 +690,7 @@
     <div id="screen-study" class="screen">
         <div style="display:flex; justify-content:space-between; align-items:center; color:#666; font-size:0.85rem; margin-bottom:8px;">
             <span id="progress-text">1 / 10</span>
-            <button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="goHome()" id="btn-exit">中断</button>
+            <span><button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="cardToList()" title="この単語の本・英文の単語一覧へ（この単語の行を表示）">📚 一覧へ</button> <button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="goHome()" id="btn-exit">中断</button></span>
         </div>
 
         <div class="nav-controls">
@@ -2477,6 +2477,39 @@ function clearAllNotes(e){
 }
 
 /* ===== List screen ===== */
+// 一覧の単語をタップ → そのカードへ（一覧に出ている順にめくれる）。カードの「📚 一覧へ」→ 一覧のその単語の行へ
+let cardFromList = false;
+function listToCard(n) {
+    const q = listShown.map(x => words.find(w => w.n === x)).filter(x => x);
+    const i = q.findIndex(w => w.n === n); if (i < 0) return;
+    stopAllAudio();
+    studyQueue = q; currentIndex = i; cardFromList = true;
+    isListeningMode = false; isPaused = false;
+    document.getElementById('controls-card').className = '';
+    document.getElementById('controls-listen').className = 'hidden text-center';
+    showScreen('screen-study');
+    renderCard();
+}
+function cardToList() {
+    const item = studyQueue && studyQueue[currentIndex];
+    stopAllAudio(); isPaused = true;
+    showScreen('screen-list');
+    const s = document.getElementById('selListSrc');
+    if (s && !cardFromList && item) {   // フラッシュカードから来たとき：その単語の本・英文だけを表示
+        s.className = '';
+        s.value = item.s ? item.s : '';
+        if (s.value !== (item.s || '')) s.value = '';
+        document.getElementById('selListLevelFilter').value = 'all';
+        document.getElementById('selListResultFilter').value = 'all';
+    }
+    renderListTable();
+    if (item) setTimeout(() => {
+        let tr = document.getElementById('lr-' + item.n);
+        if (!tr) { if (s) s.value = ''; document.getElementById('selListLevelFilter').value = 'all'; document.getElementById('selListResultFilter').value = 'all'; renderListTable(); tr = document.getElementById('lr-' + item.n); }
+        if (tr) { tr.scrollIntoView({ block: 'center' }); tr.style.transition = 'background 1.5s'; tr.style.background = '#fff3cd'; setTimeout(() => { tr.style.background = ''; }, 1500); }
+    }, 50);
+    cardFromList = false;
+}
 function showSrcList() {
     showScreen('screen-list');
     const s = document.getElementById('selListSrc');
@@ -2522,9 +2555,10 @@ function renderListTable() {
             fragment.appendChild(hr);
         }
         const tr = document.createElement('tr');
+        tr.id = 'lr-' + item.n;
         listShown.push(item.n);
         tr.innerHTML = `<td><input type="checkbox" ${listSel[item.n] ? 'checked' : ''} onclick="selOne(${item.n}, this.checked)" style="width:20px; height:20px;"></td><td>${item.n}</td>
-            <td><div style="font-weight:bold; color:var(--primary)">${item.w} <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="editMeaning(${item.n}, event)" title="日本語訳を書き換える">✎ 訳</button></div><div class="lm" style="font-size:0.8em; color:#666">${String(item.m).replace(/[<>&]/g, '')}</div>${item.s && !grouped ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
+            <td><div style="font-weight:bold; color:var(--primary)"><span class="lw" onclick="listToCard(${item.n})" style="cursor:pointer" title="このカードを開く">${item.w}</span> <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="editMeaning(${item.n}, event)" title="日本語訳を書き換える">✎ 訳</button></div><div class="lm" style="font-size:0.8em; color:#666">${String(item.m).replace(/[<>&]/g, '')}</div>${item.s && !grouped ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
             <td style="text-align:center"><select onchange="updateLv(${item.n}, this.value)">
                 ${[0,1,2,3,4,5].map(v => `<option value="${v}" ${st.level==v?'selected':''}>${v}</option>`).join('')}
             </select></td>`;
