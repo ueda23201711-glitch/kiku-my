@@ -697,6 +697,7 @@
             <button class="nav-btn" onclick="manualMove(-1)">← 前</button>
             <button class="nav-btn" onclick="manualMove(1)">次 →</button>
         </div>
+        <div id="to-first" class="hidden" style="text-align:center; margin:-4px 0 8px;"><button class="btn-primary" style="padding:8px 18px; border-radius:20px;" onclick="toFirstCard()">⏮ 最初の単語に戻る</button></div>
 
         <div class="flashcard" id="card-area" aria-label="flashcard">
             <div id="swipe-hint"></div>
@@ -1610,6 +1611,7 @@ function showScreen(id) {
     document.getElementById(id).classList.add('active');
 }
 
+function toFirstCard() { if (!studyQueue || !studyQueue.length) return; stopAllAudio(); currentIndex = 0; renderCard(); }
 function goHome() {
     stopAllAudio();
     const sf = document.getElementById('sel-float'); if (sf) sf.style.display = 'none';
@@ -1681,10 +1683,13 @@ function renderCard() {
     if (listenTimer) clearTimeout(listenTimer);
     if (currentIndex < 0) currentIndex = 0;
     if (currentIndex >= studyQueue.length) {
-        alert("最後まで到達しました。");
+        if (!isListeningMode && studyQueue.length > 1 && confirm('最後まで来ました（' + studyQueue.length + ' 語）。最初の単語に戻りますか？\n（「キャンセル」で設定に戻ります）')) { currentIndex = 0; renderCard(); return; }
+        if (isListeningMode) alert("最後まで到達しました。");
         goHome();
         return;
     }
+    // 最後の単語のときは「最初の単語に戻る」を出す（ここでの最初＝いま勉強している単語の並びの最初）
+    const tf = document.getElementById('to-first'); if (tf) tf.className = (currentIndex === studyQueue.length - 1 && studyQueue.length > 1) ? '' : 'hidden';
 
     const item = studyQueue[currentIndex];
     const status = getStatus(item.n);
