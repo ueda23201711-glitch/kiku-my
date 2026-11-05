@@ -803,6 +803,7 @@
             <button class="tool-btn" style="padding:6px 10px" onclick="selAll(true)">☑ 表示中を全選択</button>
             <button class="tool-btn" style="padding:6px 10px" onclick="selAll(false)">☐ 選択を解除</button>
             <span id="sel-n" style="font-size:0.85rem; color:#666;">0 語を選択</span>
+            <select id="sel-lv" onchange="setLvBulk(this)" style="font-size:0.85rem; padding:5px 6px;"><option value="">選んだ単語の LV をまとめて…</option><option value="0">LV.0 にする</option><option value="1">LV.1 にする</option><option value="2">LV.2 にする</option><option value="3">LV.3 にする</option><option value="4">LV.4 にする</option><option value="5">LV.5（完璧）にする</option></select>
             <button class="tool-btn" style="padding:6px 10px" onclick="exportCsv()">⬇ CSV で書き出す</button>
             <button class="tool-btn" style="padding:6px 10px" onclick="openPrompt()">🤖 勉強用の英文を作るプロンプト</button>
         </div>
@@ -2779,6 +2780,18 @@ function selShow() { const el = document.getElementById('sel-n'); if (el) el.tex
 function selOne(n, on) { if (on) listSel[n] = 1; else delete listSel[n]; selShow(); }
 function selAll(on) { if (on) listShown.forEach(n => { listSel[n] = 1; }); else listSel = {}; renderListTable(); selShow(); }
 function selWords() { return words.filter(w => listSel[w.n]); }
+// 選んだ単語の LV をまとめて変える
+function setLvBulk(el) {
+    const lv = el.value; el.value = '';
+    if (lv === '') return;
+    const list = selWords();
+    if (!list.length) { alert('LV を変える単語を選んでください（本の見出しの「この本の単語を選ぶ」や「表示中を全選択」も使えます）。'); return; }
+    if (!confirm('選んだ ' + list.length + ' 語を LV.' + lv + ' にしますか？')) return;
+    list.forEach(w => { const st = getStatus(w.n); st.level = parseInt(lv, 10); saveStatus(w.n, st); });
+    renderListTable(); if (typeof refreshMainStats === 'function') refreshMainStats();
+    const m = document.getElementById('sel-n'); if (m) m.textContent = list.length + ' 語を LV.' + lv + ' にしました';
+    setTimeout(selShow, 2500);
+}
 function exportCsv() {
     const list = selWords();
     if (!list.length) { alert('書き出す単語を選んでください（「表示中を全選択」も使えます）。'); return; }
