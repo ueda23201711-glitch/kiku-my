@@ -778,7 +778,10 @@
 
     <!-- 3. List/Manage Screen -->
     <div id="screen-list" class="screen">
-        <h2>データ一覧 / 編集</h2>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <button class="btn-outline" style="padding:6px 12px; font-size:0.85rem; border-radius:20px; white-space:nowrap;" onclick="goHome()">← 設定に戻る</button>
+            <h2 style="margin:0; flex:1; text-align:center;">データ一覧 / 編集</h2>
+        </div>
         <div class="filter-bar" style="margin-bottom:10px; display:flex; gap:5px;">
             <select id="selListLevelFilter" onchange="renderListTable()" style="flex:1">
                 <option value="all">全レベルを表示</option>
@@ -2479,6 +2482,7 @@ function clearAllNotes(e){
 /* ===== List screen ===== */
 // 一覧の単語をタップ → そのカードへ（一覧に出ている順にめくれる）。カードの「📚 一覧へ」→ 一覧のその単語の行へ
 let cardFromList = false;
+const grpOpen = {};   // 本ごとの表示で、開いている本
 function listToCard(n) {
     const q = listShown.map(x => words.find(w => w.n === x)).filter(x => x);
     const i = q.findIndex(w => w.n === n); if (i < 0) return;
@@ -2502,6 +2506,7 @@ function cardToList() {
         document.getElementById('selListLevelFilter').value = 'all';
         document.getElementById('selListResultFilter').value = 'all';
     }
+    if (item) grpOpen[item.s || ''] = 1;
     renderListTable();
     if (item) setTimeout(() => {
         let tr = document.getElementById('lr-' + item.n);
@@ -2536,7 +2541,7 @@ function renderListTable() {
         const rank = {}; srcList().forEach((x, i) => { rank[x.s] = i; });
         order = words.slice().sort((a, b) => { const ra = a.s ? (rank[a.s] !== undefined ? rank[a.s] : 9999) : 10000, rb = b.s ? (rank[b.s] !== undefined ? rank[b.s] : 9999) : 10000; return ra - rb || a.n - b.n; });
     }
-    let lastGrp = null;
+    let lastGrp = null, grpShut = false;
     const grpCount = {}; if (grouped) words.forEach(w => { const g = w.s || ''; grpCount[g] = (grpCount[g] || 0) + 1; });
 
     order.forEach(item => {
@@ -2549,11 +2554,15 @@ function renderListTable() {
         }
         if (grouped && (item.s || '') !== lastGrp) {
             lastGrp = item.s || '';
-            const g = lastGrp, hr = document.createElement('tr');
-            hr.innerHTML = `<td colspan="4" style="background:#f3efe9; font-weight:bold; padding:8px 6px;">📚 ${(g || '（どこから保存したか分からない単語）').replace(/[<>&]/g, '')}　<span style="font-weight:normal; color:#777; font-size:0.85em">${grpCount[g]}語</span> <button class="tool-btn" style="padding:2px 8px; font-size:0.75rem; margin-left:6px">☑ この本の単語を選ぶ</button></td>`;
+            const g = lastGrp, hr = document.createElement('tr'), open = !!grpOpen[g];
+            grpShut = !open;
+            hr.style.cursor = 'pointer';
+            hr.onclick = () => { if (grpOpen[g]) delete grpOpen[g]; else grpOpen[g] = 1; renderListTable(); };
+            hr.innerHTML = `<td colspan="4" style="background:#f3efe9; font-weight:bold; padding:8px 6px;">${open ? '▼' : '▶'} 📚 ${(g || '（どこから保存したか分からない単語）').replace(/[<>&]/g, '')}　<span style="font-weight:normal; color:#777; font-size:0.85em">${grpCount[g]}語</span> <button class="tool-btn" style="padding:2px 8px; font-size:0.75rem; margin-left:6px">☑ この本の単語を選ぶ</button></td>`;
             hr.querySelector('button').onclick = (e) => { e.stopPropagation(); words.forEach(w => { if ((w.s || '') === g) listSel[w.n] = 1; }); renderListTable(); selShow(); };
             fragment.appendChild(hr);
         }
+        if (grouped && grpShut) return;   // たたんだ本の単語は出さない（見出しを押すと開く）
         const tr = document.createElement('tr');
         tr.id = 'lr-' + item.n;
         listShown.push(item.n);
