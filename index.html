@@ -2487,6 +2487,11 @@ function clearAllNotes(e){
 let favMap = null, favAt = 0;
 function grpSortGet() { try { return localStorage.getItem('grp_sort') || 'new'; } catch (e) { return 'new'; } }
 function grpSortSave() { try { localStorage.setItem('grp_sort', document.getElementById('selGrpSort').value); } catch (e) {} if (document.getElementById('selGrpSort').value === 'fav') favLoad(true); }
+function favFromDocs(all) {
+    const m = {};
+    Object.keys(all || {}).forEach(id => { const d = all[id]; if (!d) return; const f = d.book ? (d.bfav || 0) : (d.fav || 0); const l = String(d.book ? (d.bookTitle || '') : String(d.title || '').replace(/^(🌐|🎬|📚) /, '')).replace(/[\t\n\r]+/g, ' ').trim().slice(0, 60); if (l && f > (m[l] || 0)) m[l] = f; });
+    return m;
+}
 function favLocal() {
     const m = {};
     try {
@@ -2500,9 +2505,16 @@ function favLoad(force) {
     const key = cloudKey();
     if (!key || (!force && Date.now() - favAt < 60000)) return;
     favAt = Date.now();
+    const apply = (m) => { favMap = Object.assign(favLocal(), m); try { renderSrcOptions(); } catch (e2) {} if (document.getElementById('screen-list').classList.contains('active')) renderListTable(); };
+    // 英文リーダーの英文から ★ を集める（英文リーダーがまだ ★ のまとめを送っていないとき）
+    const fromReader = () => cloudReq('GET', '/memos/' + key + '/reader', undefined, function (e3, all) {
+        if (e3 || !all || typeof all !== 'object') return;
+        const m = favFromDocs(all); apply(m);
+        cloudReq('PUT', '/memos/' + key + '/favs', { map: JSON.stringify(m), at: Date.now() }, function () {});
+    });
     cloudReq('GET', '/memos/' + key + '/favs/map', undefined, function (err, js) {
-        if (err || typeof js !== 'string') return;
-        try { const m = JSON.parse(js); if (m && typeof m === 'object') { favMap = Object.assign(favLocal(), m); try { renderSrcOptions(); } catch (e2) {} if (document.getElementById('screen-list').classList.contains('active')) renderListTable(); } } catch (e) {}
+        let m = null; try { m = typeof js === 'string' ? JSON.parse(js) : null; } catch (e) {}
+        if (!err && m && typeof m === 'object') apply(m); else if (!err) fromReader();   // まとめがまだない（null）ときだけ、英文から集める
     });
 }
 function srcFav(s) { if (!favMap) favLoad(); return (favMap && s && favMap[s]) || 0; }
