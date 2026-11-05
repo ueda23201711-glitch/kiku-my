@@ -1127,7 +1127,7 @@ function renderSrcOptions() {
         const o0 = document.createElement('option'); o0.value = ''; o0.textContent = i === 0 ? 'すべての本・英文の単語' : '全部の本・英文'; el.appendChild(o0);
         if (i === 1) { const og = document.createElement('option'); og.value = '__group__'; og.textContent = '📚 本・英文ごとにまとめて表示'; el.appendChild(og); }
         const none = words.filter(w => !w.s).length;
-        list.forEach(x => { const o = document.createElement('option'); o.value = x.s; o.textContent = '📚 ' + x.s + '（' + x.c + '語）'; el.appendChild(o); });
+        list.forEach(x => { const o = document.createElement('option'); o.value = x.s; const fv = srcFav(x.s); o.textContent = '📚 ' + (fv ? '★'.repeat(fv) + ' ' : '') + x.s + '（' + x.c + '語）'; el.appendChild(o); });
         if (none) { const o = document.createElement('option'); o.value = '__none__'; o.textContent = '（どこから保存したか分からない単語 ' + none + '語）'; el.appendChild(o); }
         el.value = cur; if (el.value !== cur) el.value = '';
     });
@@ -2502,7 +2502,7 @@ function favLoad(force) {
     favAt = Date.now();
     cloudReq('GET', '/memos/' + key + '/favs/map', undefined, function (err, js) {
         if (err || typeof js !== 'string') return;
-        try { const m = JSON.parse(js); if (m && typeof m === 'object') { favMap = Object.assign(favLocal(), m); if (document.getElementById('screen-list').classList.contains('active')) renderListTable(); } } catch (e) {}
+        try { const m = JSON.parse(js); if (m && typeof m === 'object') { favMap = Object.assign(favLocal(), m); try { renderSrcOptions(); } catch (e2) {} if (document.getElementById('screen-list').classList.contains('active')) renderListTable(); } } catch (e) {}
     });
 }
 function srcFav(s) { if (!favMap) favLoad(); return (favMap && s && favMap[s]) || 0; }
@@ -2593,7 +2593,7 @@ function renderListTable() {
             hr.style.cursor = 'pointer';
             hr.onclick = () => { if (grpOpen[g]) delete grpOpen[g]; else grpOpen[g] = 1; renderListTable(); };
             const fv = srcFav(g);
-            hr.innerHTML = `<td colspan="4" style="background:#f3efe9; font-weight:bold; padding:8px 6px;">${open ? '▼' : '▶'} ${fv ? '<span style="color:#e0a000">' + '★'.repeat(fv) + '</span> ' : ''}📚 ${(g || '（どこから保存したか分からない単語）').replace(/[<>&]/g, '')}　<span style="font-weight:normal; color:#777; font-size:0.85em">${grpCount[g]}語</span> <button class="tool-btn" style="padding:2px 8px; font-size:0.75rem; margin-left:6px">☑ この本の単語を選ぶ</button></td>`;
+            hr.innerHTML = `<td colspan="4" style="background:#f3efe9; font-weight:bold; padding:8px 6px;">${open ? '▼' : '▶'} ${fv ? '<span style="color:#e0a000; font-size:1.05em; letter-spacing:1px">' + '★'.repeat(fv) + '<span style="color:#ccc">' + '★'.repeat(3 - Math.min(3, fv)) + '</span></span> ' : '<span style="color:#ccc; font-size:1.05em; letter-spacing:1px">☆☆☆</span> '}📚 ${(g || '（どこから保存したか分からない単語）').replace(/[<>&]/g, '')}　<span style="font-weight:normal; color:#777; font-size:0.85em">${grpCount[g]}語</span> <button class="tool-btn" style="padding:2px 8px; font-size:0.75rem; margin-left:6px">☑ この本の単語を選ぶ</button></td>`;
             hr.querySelector('button').onclick = (e) => { e.stopPropagation(); words.forEach(w => { if ((w.s || '') === g) listSel[w.n] = 1; }); renderListTable(); selShow(); };
             fragment.appendChild(hr);
         }
