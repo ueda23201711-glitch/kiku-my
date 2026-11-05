@@ -1612,6 +1612,7 @@ function showScreen(id) {
 
 function goHome() {
     stopAllAudio();
+    const sf = document.getElementById('sel-float'); if (sf) sf.style.display = 'none';
     isPaused = true;
     showScreen('screen-setup');
     renderResume();
@@ -2613,7 +2614,7 @@ function renderListTable() {
         const tr = document.createElement('tr');
         tr.id = 'lr-' + item.n;
         listShown.push(item.n);
-        tr.innerHTML = `<td><input type="checkbox" ${listSel[item.n] ? 'checked' : ''} onclick="selOne(${item.n}, this.checked)" style="width:20px; height:20px;"></td><td>${item.n}</td>
+        tr.innerHTML = `<td><input type="checkbox" ${listSel[item.n] ? 'checked' : ''} onclick="selOne(${item.n}, this.checked, event)" style="width:20px; height:20px;"></td><td>${item.n}</td>
             <td><div style="font-weight:bold; color:var(--primary)"><span class="lw" onclick="listToCard(${item.n})" style="cursor:pointer" title="このカードを開く">${item.w}</span> <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="editMeaning(${item.n}, event)" title="日本語訳を書き換える">✎ 訳</button></div><div class="lm" style="font-size:0.8em; color:#666">${String(item.m).replace(/[<>&]/g, '')}</div>${item.s && !grouped ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
             <td style="text-align:center"><select onchange="updateLv(${item.n}, this.value)">
                 ${[0,1,2,3,4,5].map(v => `<option value="${v}" ${st.level==v?'selected':''}>${v}</option>`).join('')}
@@ -2822,8 +2823,28 @@ function addCommit() {
 // ===== 選んだ単語を CSV に書き出す・勉強用の英文を作る LLM 用のプロンプト =====
 let listSel = {}, listShown = [];
 function selCount() { let n = 0; words.forEach(w => { if (listSel[w.n]) n++; }); return n; }
-function selShow() { const el = document.getElementById('sel-n'); if (el) el.textContent = selCount() + ' 語を選択'; if (document.getElementById('prompt-box').style.display !== 'none') buildPrompt(); }
-function selOne(n, on) { if (on) listSel[n] = 1; else delete listSel[n]; selShow(); }
+function selShow() {
+    const c = selCount(), el = document.getElementById('sel-n'); if (el) el.textContent = c + ' 語を選択';
+    // スクロールしても見えるように、画面の下にも選んだ数を出す
+    let f = document.getElementById('sel-float');
+    if (!f) { f = document.createElement('div'); f.id = 'sel-float'; f.style.cssText = 'position:fixed; left:50%; bottom:14px; transform:translateX(-50%); background:#2f3b45; color:#fff; padding:8px 16px; border-radius:20px; font-size:0.9rem; z-index:150; box-shadow:0 2px 8px rgba(0,0,0,.25); display:none; white-space:nowrap;'; document.body.appendChild(f); }
+    f.textContent = '☑ ' + c + ' 語を選択中';
+    f.style.display = c && document.getElementById('screen-list').classList.contains('active') ? 'block' : 'none';
+    if (document.getElementById('prompt-box').style.display !== 'none') buildPrompt();
+}
+// Shift を押しながらチェック：前にチェックした単語から、ここまでをまとめて（付ける・外す）
+let selLast = null;
+function selOne(n, on, e) {
+    if (e && e.shiftKey && selLast !== null) {
+        const a = listShown.indexOf(selLast), b = listShown.indexOf(n);
+        if (a >= 0 && b >= 0) {
+            for (let i = Math.min(a, b); i <= Math.max(a, b); i++) { if (on) listSel[listShown[i]] = 1; else delete listSel[listShown[i]]; }
+            selLast = n; renderListTable(); selShow(); return;
+        }
+    }
+    if (on) listSel[n] = 1; else delete listSel[n];
+    selLast = n; selShow();
+}
 function selAll(on) { if (on) listShown.forEach(n => { listSel[n] = 1; }); else listSel = {}; renderListTable(); selShow(); }
 function selWords() { return words.filter(w => listSel[w.n]); }
 // 選んだ単語の LV をまとめて変える
