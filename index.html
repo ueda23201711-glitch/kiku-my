@@ -774,6 +774,8 @@
         <div id="controls-listen" class="hidden text-center">
             <p id="listen-status-label" style="color:var(--primary); font-weight:bold; font-size:0.9rem; margin:8px 0;">AUTO PLAYING...</p>
             <button class="btn-neutral btn-block" onclick="togglePause()" id="btn-pause">一時停止</button>
+            <button class="btn-primary btn-block" style="margin-top:8px" onclick="vpkStart()" id="btn-vpk">🎧 ポケットで聞く（画面を消しても流れる）</button>
+            <div id="vpk-msg" style="font-size:0.82rem; color:#666; margin-top:6px; line-height:1.5;"></div>
         </div>
     </div>
 
@@ -1611,8 +1613,112 @@ function showScreen(id) {
     document.getElementById(id).classList.add('active');
 }
 
+// 聞き流し用：日本語訳を1つだけ、短く（〈 〉や（ ）の説明を除いて、最初の意味だけ）
+function shortMean(m) {
+    let t = String(m || '').replace(/〈[^〉]*〉|《[^》]*》|\[[^\]]*\]|【[^】]*】|\([^)]*\)|（[^）]*）|『|』|「|」/g, '');
+    const parts = t.split(/[、,，;；\/／・]|\s{2,}/).map(x => x.replace(/^[\s…\.〜～]+|[\s…\.]+$/g, '').replace(/[A-Za-z]+/g, '').trim()).filter(x => x.length >= 1);
+    t = (parts[0] || String(m || '').replace(/[A-Za-z]/g, '').trim()).replace(/^を(?=..)/, '');   // 「〈物〉を取り散らかす」→「取り散らかす」
+    return t.length > 16 ? t.slice(0, 16) : t;
+}
+/* ===== 🎧 ポケットで聞く（単語）：英単語（AI の英語の声）と短い訳（AI の日本語の声）を、1本の音声にして流す。
+   画面を消しても止まらない（1本の音声を流すだけなので）。声は英文リーダーと同じ Apps Script で作り、ドライブに保存される ===== */
+const VPK_EN = 'Ava', VPK_JA = 'Nanami', VPK_RATE = 16000;
+let vpk = null, vpkAudio = null, vpkCtx = null, vpkGen = 0;
+function gasUrlK() { let u = ''; try { u = localStorage.getItem('eibun_gas') || ''; } catch (e) {} return /^https:\/\//.test(u) ? u : ''; }
+function gasJsonp(params, cb) {
+    const url = gasUrlK(); if (!url) { cb(null, 'nogas'); return; }
+    const key = cloudKey();
+    const go = (tk) => {
+        const name = '__vpk' + Date.now() + Math.floor(Math.random() * 1e6);
+        let done = false; const sc = document.createElement('script');
+        const fin = (d, e) => { if (done) return; done = true; try { delete window[name]; } catch (x) { window[name] = undefined; } if (sc.parentNode) sc.parentNode.removeChild(sc); cb(d, e); };
+        window[name] = (d) => fin(d, null);
+        const qs = Object.keys(params).map(k => k + '=' + encodeURIComponent(params[k])).join('&');
+        sc.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + (tk ? 'tk=' + tk + '&' : '') + qs + '&callback=' + name;
+        sc.onerror = () => fin(null, 'net');
+        setTimeout(() => fin(null, 'timeout'), 90000);
+        document.head.appendChild(sc);
+    };
+    if (!key || !window.crypto || !crypto.subtle) { go(''); return; }
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode('tegaki-gas|' + key)).then(h => go(Array.prototype.map.call(new Uint8Array(h), b => ('0' + b.toString(16)).slice(-2)).join('').slice(0, 32))).catch(() => go(''));
+}
+function vpkTts(text, voice, cb, tries) {
+    gasJsonp({ tts: text, v: voice }, (d, e) => {
+        if ((!d || (!d.ok && /^(429|5\d\d)/.test(String(d.error || '')))) && (tries || 0) < 2) { setTimeout(() => vpkTts(text, voice, cb, (tries || 0) + 1), 3000); return; }
+        if (!d || !d.ok || !d.a) { cb(null, (d && d.error) || e || 'error'); return; }
+        try { const bin = atob(d.a), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); cb(u.buffer, null); } catch (x) { cb(null, 'decode'); }
+    });
+}
+function vpkDecode(buf) {
+    if (!vpkCtx) vpkCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return new Promise((ok) => { try { const pr = vpkCtx.decodeAudioData(buf.slice(0), ab => ok(ab), () => ok(null)); if (pr && pr.then) pr.then(ok, () => ok(null)); } catch (e) { ok(null); } });
+}
+function vpkPcm(ab) { const src = ab.getChannelData(0), r = ab.sampleRate / VPK_RATE, n = Math.floor(src.length / r), out = new Float32Array(n); for (let i = 0; i < n; i++) { const x = i * r, k = Math.floor(x), f = x - k; out[i] = src[k] * (1 - f) + (k + 1 < src.length ? src[k + 1] : 0) * f; } return out; }
+function vpkWav(parts) {
+    let n = 0; parts.forEach(q => { n += q.length; });
+    const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf); let o = 0;
+    const ws = t => { for (let i = 0; i < t.length; i++) v.setUint8(o++, t.charCodeAt(i)); }, u32 = x => { v.setUint32(o, x, true); o += 4; }, u16 = x => { v.setUint16(o, x, true); o += 2; };
+    ws('RIFF'); u32(36 + n * 2); ws('WAVE'); ws('fmt '); u32(16); u16(1); u16(1); u32(VPK_RATE); u32(VPK_RATE * 2); u16(2); u16(16); ws('data'); u32(n * 2);
+    const i16 = new Int16Array(buf, 44, n); let j = 0;
+    parts.forEach(q => { for (let i = 0; i < q.length; i++) { const x = q[i]; i16[j++] = x <= -1 ? -32768 : x >= 1 ? 32767 : (x < 0 ? x * 32768 : x * 32767); } });
+    return new Blob([buf], { type: 'audio/wav' });
+}
+function vpkMsg(t) { const el = document.getElementById('vpk-msg'); if (el) el.textContent = t; }
+function vpkStop() { if (vpkAudio) { try { vpkAudio.pause(); } catch (e) {} } vpk = null; vpkGen++; const b = document.getElementById('btn-vpk'); if (b) b.textContent = '🎧 ポケットで聞く（画面を消しても流れる）'; }
+async function vpkStart() {
+    if (vpk) { vpkStop(); vpkMsg('ポケットで聞くのをやめました。'); return; }
+    if (!gasUrlK()) { vpkMsg('AI の声を作るには、英文リーダーの「⚙ 翻訳の設定」で Apps Script を設定してください（Azure の声を使います）。'); return; }
+    // タップした瞬間に音を出せるようにしておく（あとで再生できるように）
+    if (!vpkAudio) { vpkAudio = new Audio(); vpkAudio.setAttribute('playsinline', ''); }
+    try { vpkAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='; const pr = vpkAudio.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+    stopAllAudio(); isPaused = true;
+    const list = studyQueue.slice(currentIndex, currentIndex + 200), my = ++vpkGen, startIdx = currentIndex;
+    const silence = s => new Float32Array(Math.round(VPK_RATE * s));
+    const parts = [], times = []; let T = 0, fail = '';
+    for (let i = 0; i < list.length; i++) {
+        if (my !== vpkGen) return;
+        vpkMsg('🎧 声を用意しています… ' + i + ' / ' + list.length + '（初めての単語は AI が作ります。2回目からは速くなります）');
+        const en = await new Promise(ok => vpkTts(list[i].w, VPK_EN, (b, e) => { if (e) fail = e; ok(b); }));
+        const ja = await new Promise(ok => vpkTts(shortMean(list[i].m) || '…', VPK_JA, (b, e) => { if (e) fail = e; ok(b); }));
+        if (!en) { vpkMsg('🎧 声を作れませんでした（' + fail + '）。' + (/noazkey|azkey/.test(fail) ? 'Azure の声の設定（AZURE_KEY）が必要です。' : /Nanami|voice/i.test(fail) ? 'Apps Script のコードを新しいものに貼り替えてください。' : '')); return; }
+        const a1 = await vpkDecode(en), a2 = ja ? await vpkDecode(ja) : null;
+        times.push(T);
+        if (a1) { const pcm = vpkPcm(a1); parts.push(pcm); T += pcm.length / VPK_RATE; }
+        parts.push(silence(0.6)); T += 0.6;
+        if (a2) { const pcm2 = vpkPcm(a2); parts.push(pcm2); T += pcm2.length / VPK_RATE; }
+        parts.push(silence(1.2)); T += 1.2;
+    }
+    if (my !== vpkGen) return;
+    const url = URL.createObjectURL(vpkWav(parts));
+    vpk = { url: url, times: times, start: startIdx };
+    const au = vpkAudio;
+    au.src = url;
+    au.ontimeupdate = () => {
+        if (!vpk) return;
+        const t = au.currentTime; let k = 0; for (let i = 0; i < times.length; i++) { if (times[i] <= t + 0.05) k = i; else break; }
+        const idx = vpk.start + k;
+        if (idx !== currentIndex && !document.hidden) { currentIndex = idx; isPaused = true; renderCard(); revealMeaningSilent(); }
+        else currentIndex = idx;
+    };
+    au.onended = () => { vpkMsg('🎧 最後まで聞きました。'); vpkStop(); };
+    if ('mediaSession' in navigator) {
+        try {
+            navigator.mediaSession.metadata = new MediaMetadata({ title: '単語の聞き流し（' + list.length + ' 語）', artist: document.title || '単語帳' });
+            navigator.mediaSession.setActionHandler('play', () => au.play());
+            navigator.mediaSession.setActionHandler('pause', () => au.pause());
+            const jump = d => { const t = au.currentTime; let k = 0; for (let i = 0; i < times.length; i++) if (times[i] <= t + 0.05) k = i; k = Math.max(0, Math.min(times.length - 1, k + d)); au.currentTime = times[k]; };
+            navigator.mediaSession.setActionHandler('nexttrack', () => jump(1));
+            navigator.mediaSession.setActionHandler('previoustrack', () => jump(-1));
+        } catch (e) {}
+    }
+    const pr = au.play(); if (pr && pr.catch) pr.catch(() => vpkMsg('🎧 準備できました。もう一度ボタンを押してください。'));
+    const b = document.getElementById('btn-vpk'); if (b) b.textContent = '■ ポケットで聞くのをやめる';
+    vpkMsg('🎧 ' + list.length + ' 語を流しています。画面を消して、ポケットに入れても大丈夫です。');
+}
+function revealMeaningSilent() { const el = document.getElementById('txt-meaning'), btn = document.getElementById('btn-show-meaning'); if (el) el.classList.remove('hidden'); if (btn) btn.classList.add('hidden'); }
 function toFirstCard() { if (!studyQueue || !studyQueue.length) return; stopAllAudio(); currentIndex = 0; renderCard(); }
 function goHome() {
+    if (typeof vpkStop === 'function' && vpk) vpkStop();
     stopAllAudio();
     const sf = document.getElementById('sel-float'); if (sf) sf.style.display = 'none';
     isPaused = true;
@@ -1748,7 +1854,7 @@ function revealMeaning(callback) {
     if (el.classList.contains('hidden')) {
         el.classList.remove('hidden');
         btn.classList.add('hidden');
-        const cleanText = studyQueue[currentIndex].m.replace(/\(.*\)/g, '').replace(/（.*）/g, '').replace(/[a-z]/gi, '');
+        const cleanText = isListeningMode ? shortMean(studyQueue[currentIndex].m) : studyQueue[currentIndex].m.replace(/\(.*\)/g, '').replace(/（.*）/g, '').replace(/[a-z]/gi, '');
         speak(cleanText, 'ja-JP', callback);
     } else if (callback) {
         callback();
