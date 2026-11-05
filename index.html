@@ -793,6 +793,7 @@
                 <option value="5">LV.5 (完璧)</option>
             </select>
             <select id="selListSrc" class="hidden" onchange="renderListTable()" style="flex:1"></select>
+            <select id="selGrpSort" class="hidden" onchange="grpSortSave(); renderListTable()" style="flex:1"><option value="new">並び：新しく保存した本から</option><option value="fav">並び：★の多い本から</option><option value="name">並び：題名の順</option><option value="count">並び：単語の多い本から</option></select>
             <select id="selListResultFilter" onchange="renderListTable()" style="flex:1">
                 <option value="all">全結果</option>
                 <option value="unknown">「わからない」のみ</option>
@@ -2482,6 +2483,36 @@ function clearAllNotes(e){
 
 /* ===== List screen ===== */
 // 一覧の単語をタップ → そのカードへ（一覧に出ている順にめくれる）。カードの「📚 一覧へ」→ 一覧のその単語の行へ
+// ===== 本ごとの一覧の並び順。★ は英文リーダーで付けた本・英文の ★（クラウドの memos/合言葉/favs、なければこの端末の英文リーダーのデータ） =====
+let favMap = null, favAt = 0;
+function grpSortGet() { try { return localStorage.getItem('grp_sort') || 'new'; } catch (e) { return 'new'; } }
+function grpSortSave() { try { localStorage.setItem('grp_sort', document.getElementById('selGrpSort').value); } catch (e) {} if (document.getElementById('selGrpSort').value === 'fav') favLoad(true); }
+function favLocal() {
+    const m = {};
+    try {
+        const all = JSON.parse(localStorage.getItem('eibun_reader') || '{}') || {};
+        Object.keys(all).forEach(id => { const d = all[id]; if (!d) return; const f = d.book ? (d.bfav || 0) : (d.fav || 0); const l = String(d.book ? (d.bookTitle || '') : String(d.title || '').replace(/^(🌐|🎬|📚) /, '')).replace(/[\t\n\r]+/g, ' ').trim().slice(0, 60); if (l && f > (m[l] || 0)) m[l] = f; });
+    } catch (e) {}
+    return m;
+}
+function favLoad(force) {
+    if (!favMap) favMap = favLocal();
+    const key = cloudKey();
+    if (!key || (!force && Date.now() - favAt < 60000)) return;
+    favAt = Date.now();
+    cloudReq('GET', '/memos/' + key + '/favs/map', undefined, function (err, js) {
+        if (err || typeof js !== 'string') return;
+        try { const m = JSON.parse(js); if (m && typeof m === 'object') { favMap = Object.assign(favLocal(), m); if (document.getElementById('screen-list').classList.contains('active')) renderListTable(); } } catch (e) {}
+    });
+}
+function srcFav(s) { if (!favMap) favLoad(); return (favMap && s && favMap[s]) || 0; }
+function srcListSorted() {
+    const list = srcList(), mode = grpSortGet();
+    if (mode === 'fav') return list.slice().sort((a, b) => (srcFav(b.s) - srcFav(a.s)) || (b.b - a.b));
+    if (mode === 'name') return list.slice().sort((a, b) => a.s.toLowerCase() < b.s.toLowerCase() ? -1 : a.s.toLowerCase() > b.s.toLowerCase() ? 1 : 0);
+    if (mode === 'count') return list.slice().sort((a, b) => (b.c - a.c) || (b.b - a.b));
+    return list;
+}
 let cardFromList = false;
 const grpOpen = {};   // 本ごとの表示で、開いている本
 function listToCard(n) {
@@ -2517,7 +2548,7 @@ function cardToList() {
     cardFromList = false;
 }
 function showSrcList() {
-    showScreen('screen-list');
+    showScreen('screen-list'); favLoad(true);
     const s = document.getElementById('selListSrc');
     if (s) { s.className = ''; if (![...s.options].some(o => o.value === '__group__')) { const og = document.createElement('option'); og.value = '__group__'; og.textContent = '📚 本・英文ごとにまとめて表示'; s.insertBefore(og, s.options[1] || null); } s.value = '__group__'; }
     renderListTable();
@@ -2538,8 +2569,10 @@ function renderListTable() {
     // 本・英文ごとにまとめる：新しく保存した本から順に、見出しを付けて並べる
     const grouped = filterSrc === '__group__';
     let order = words;
+    const gs = document.getElementById('selGrpSort');
+    if (gs) { gs.className = grouped ? '' : 'hidden'; gs.value = grpSortGet(); }
     if (grouped) {
-        const rank = {}; srcList().forEach((x, i) => { rank[x.s] = i; });
+        const rank = {}; srcListSorted().forEach((x, i) => { rank[x.s] = i; });
         order = words.slice().sort((a, b) => { const ra = a.s ? (rank[a.s] !== undefined ? rank[a.s] : 9999) : 10000, rb = b.s ? (rank[b.s] !== undefined ? rank[b.s] : 9999) : 10000; return ra - rb || a.n - b.n; });
     }
     let lastGrp = null, grpShut = false;
@@ -2559,7 +2592,8 @@ function renderListTable() {
             grpShut = !open;
             hr.style.cursor = 'pointer';
             hr.onclick = () => { if (grpOpen[g]) delete grpOpen[g]; else grpOpen[g] = 1; renderListTable(); };
-            hr.innerHTML = `<td colspan="4" style="background:#f3efe9; font-weight:bold; padding:8px 6px;">${open ? '▼' : '▶'} 📚 ${(g || '（どこから保存したか分からない単語）').replace(/[<>&]/g, '')}　<span style="font-weight:normal; color:#777; font-size:0.85em">${grpCount[g]}語</span> <button class="tool-btn" style="padding:2px 8px; font-size:0.75rem; margin-left:6px">☑ この本の単語を選ぶ</button></td>`;
+            const fv = srcFav(g);
+            hr.innerHTML = `<td colspan="4" style="background:#f3efe9; font-weight:bold; padding:8px 6px;">${open ? '▼' : '▶'} ${fv ? '<span style="color:#e0a000">' + '★'.repeat(fv) + '</span> ' : ''}📚 ${(g || '（どこから保存したか分からない単語）').replace(/[<>&]/g, '')}　<span style="font-weight:normal; color:#777; font-size:0.85em">${grpCount[g]}語</span> <button class="tool-btn" style="padding:2px 8px; font-size:0.75rem; margin-left:6px">☑ この本の単語を選ぶ</button></td>`;
             hr.querySelector('button').onclick = (e) => { e.stopPropagation(); words.forEach(w => { if ((w.s || '') === g) listSel[w.n] = 1; }); renderListTable(); selShow(); };
             fragment.appendChild(hr);
         }
