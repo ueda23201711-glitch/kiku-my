@@ -690,7 +690,7 @@
     <div id="screen-study" class="screen">
         <div style="display:flex; justify-content:space-between; align-items:center; color:#666; font-size:0.85rem; margin-bottom:8px;">
             <span id="progress-text">1 / 10</span>
-            <span><button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="cardToList()" title="この単語の本・英文の単語一覧へ（この単語の行を表示）">📚 一覧へ</button> <button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="goHome()" id="btn-exit">中断</button></span>
+            <span><button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="toFirstCard()" title="いま勉強している単語の、最初のカードへ">⏮ 最初へ</button> <button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="cardToList()" title="この単語の本・英文の単語一覧へ（この単語の行を表示）">📚 一覧へ</button> <button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="goHome()" id="btn-exit">← 設定に戻る</button></span>
         </div>
 
         <div class="nav-controls">
@@ -1733,6 +1733,10 @@ function renderCard() {
 function manualMove(offset) {
     stopAllAudio();
     const nextIdx = currentIndex + offset;
+    if (nextIdx >= studyQueue.length && offset > 0 && studyQueue.length > 1) {   // 最後のカードから先へ：最初に戻るか聞く
+        if (confirm('最後の単語です（' + studyQueue.length + ' 語）。最初の単語に戻りますか？')) toFirstCard();
+        return;
+    }
     if (nextIdx < 0 || nextIdx >= studyQueue.length) return;
     currentIndex = nextIdx;
     renderCard();
