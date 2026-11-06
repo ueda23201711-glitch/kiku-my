@@ -2179,13 +2179,20 @@ function manualMove(offset) {
   currentIndex = nextIdx;
   renderCard();
 }
+// 日本語訳から、読み上げ用に短い訳を1つだけ取り出す（「〈物〉を取り散らかす、散らかす」→「取り散らかす」）
+function shortMean(m) {
+  var t = String(m || '').replace(/〈[^〉]*〉|《[^》]*》|\[[^\]]*\]|【[^】]*】|\([^)]*\)|（[^）]*）|『|』|「|」/g, '');
+  var parts = t.split(/[、,，;；\/／・]|\s{2,}/).map(function (x) { return x.replace(/^[\s…\.〜～]+|[\s…\.]+$/g, '').replace(/[A-Za-z]+/g, '').trim(); }).filter(function (x) { return x.length >= 1; });
+  t = (parts[0] || String(m || '').replace(/[A-Za-z]/g, '').trim()).replace(/^を(?=..)/, '');
+  return t.length > 16 ? t.slice(0, 16) : t;
+}
 function revealMeaning(callback) {
   var el = document.getElementById('txt-meaning');
   var btn = document.getElementById('btn-show-meaning');
   if (el.classList.contains('hidden')) {
     el.classList.remove('hidden');
     btn.classList.add('hidden');
-    var cleanText = studyQueue[currentIndex].m.replace(/\(.*\)/g, '').replace(/（.*）/g, '').replace(/[a-z]/gi, '');
+    var cleanText = shortMean(studyQueue[currentIndex].m);   // 訳は短く1つだけ読む
     speak(cleanText, 'ja-JP', callback);
   } else if (callback) {
     callback();
