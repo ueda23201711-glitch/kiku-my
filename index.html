@@ -1667,9 +1667,11 @@ function vpkTts(text, voice, cb, tries) {
         try { const bin = atob(d.a), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); cb(u.buffer, null); } catch (x) { cb(null, 'decode'); }
     });
 }
-function vpkDecode(buf) {
-    if (!vpkCtx) vpkCtx = new (window.AudioContext || window.webkitAudioContext)();
-    return new Promise((ok) => { try { const pr = vpkCtx.decodeAudioData(buf.slice(0), ab => ok(ab), () => ok(null)); if (pr && pr.then) pr.then(ok, () => ok(null)); } catch (e) { ok(null); } });
+function vpkDecode(buf, again) {
+    if (!vpkCtx || vpkCtx.state === 'closed') vpkCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const c = vpkCtx;
+    return new Promise((ok) => { let fin = false; const f = ab => { if (!fin) { fin = true; ok(ab); } }; try { const pr = c.decodeAudioData(buf.slice(0), ab => f(ab), () => f(null)); if (pr && pr.then) pr.then(f, () => f(null)); } catch (e) { f(null); } })
+        .then(ab => (!ab && !again && c !== vpkCtx) ? vpkDecode(buf, true) : ab);   // 途中で音の出口を作り直したときは、もう一度
 }
 function vpkPcm(ab) { const src = ab.getChannelData(0), r = ab.sampleRate / VPK_RATE, n = Math.floor(src.length / r), out = new Float32Array(n); for (let i = 0; i < n; i++) { const x = i * r, k = Math.floor(x), f = x - k; out[i] = src[k] * (1 - f) + (k + 1 < src.length ? src[k + 1] : 0) * f; } return out; }
 function vpkWav(parts) {
@@ -1827,8 +1829,12 @@ function aiUnlock() {
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
     try { let c = aiCtx(); if (aiFresh || c.state === 'interrupted' || c.state === 'closed') c = aiRenew(); if (c.state !== 'running') c.resume(); const b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0); } catch (e) {}
 }
-document.addEventListener('touchend', () => aiUnlock(), { passive: true });
-document.addEventListener('mousedown', () => aiUnlock(), { passive: true });
+// 先に（capture で）開けておく：スワイプやタップで声を鳴らす処理より前に動くように
+document.addEventListener('touchend', () => aiUnlock(), { passive: true, capture: true });
+document.addEventListener('mousedown', () => aiUnlock(), { passive: true, capture: true });
+// ほかのアプリ（Claude など）に移って戻ってくると、iPhone では音の出口が止められたままになる → 次のタップで作り直す
+document.addEventListener('visibilitychange', () => { if (!document.hidden) aiFresh = true; });
+window.addEventListener('pageshow', () => { aiFresh = true; });
 function aiStop() { if (aiSrc) { try { aiSrc.onended = null; aiSrc.stop(); } catch (e) {} aiSrc = null; } if (aiAudio) { try { aiAudio.pause(); } catch (e) {} } }
 function sayAI(text, lang, cb) {
     const seq = ++speakSeq, voice = lang === 'ja' ? VPK_JA : VPK_EN, slang = lang === 'ja' ? 'ja-JP' : 'en-US';
