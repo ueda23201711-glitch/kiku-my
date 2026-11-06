@@ -1779,24 +1779,59 @@ function goHome() {
 }
 
 // 「ポケットで聞く」で作った AI の声がこの端末にあれば、フラッシュカードでもそれを使う（なければ端末の声）
-let aiAudio = null;
-// タップした瞬間に無音を鳴らしておく（iPhone で、あとから AI の声を鳴らせるように）
-function aiUnlock() { try { if (!aiAudio) { aiAudio = new Audio(); aiAudio.setAttribute('playsinline', ''); } aiAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='; const pr = aiAudio.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {} }
-document.addEventListener('touchend', () => { if (!aiAudio) aiUnlock(); }, { once: true, passive: true });
+// すぐ鳴るように：前後のカードの声を先に読み込んで（デコード済み）メモリに置き、頭と最後の無音も削っておく
+let aiAudio = null, aiSrc = null;
+const aiBufs = new Map();   // voice|text → AudioBuffer（ない単語は null）
+function aiCtx() { if (!vpkCtx) vpkCtx = new (window.AudioContext || window.webkitAudioContext)(); return vpkCtx; }
+function aiTrim(ab) {
+    try {
+        const d = ab.getChannelData(0), th = 0.01, pad = Math.floor(ab.sampleRate * 0.015); let a = 0, b = d.length - 1;
+        while (a < d.length && Math.abs(d[a]) < th) a++;
+        while (b > a && Math.abs(d[b]) < th) b--;
+        a = Math.max(0, a - pad); b = Math.min(d.length, b + pad * 4);
+        if (b - a < 100 || (a === 0 && b >= d.length)) return ab;
+        const out = aiCtx().createBuffer(ab.numberOfChannels, b - a, ab.sampleRate);
+        for (let c = 0; c < ab.numberOfChannels; c++) out.copyToChannel(ab.getChannelData(c).subarray(a, b), c);
+        return out;
+    } catch (e) { return ab; }
+}
+function aiPrep(text, voice) {
+    const key = voice + '|' + text;
+    if (aiBufs.has(key)) { const v = aiBufs.get(key); return v && v.then ? v : Promise.resolve(v); }
+    const pr = vpkCacheGet(text, voice).then(buf => buf ? vpkDecode(buf) : null).then(ab => { const v = ab ? aiTrim(ab) : null; aiBufs.set(key, v); return v; });
+    aiBufs.set(key, pr);
+    if (aiBufs.size > 80) aiBufs.delete(aiBufs.keys().next().value);
+    return pr;
+}
+function aiPrefetch() {
+    if (!studyQueue || !studyQueue.length) return;
+    [0, 1, 2, 3, -1].forEach(o => { const it = studyQueue[currentIndex + o]; if (it) { aiPrep(it.w, VPK_EN); aiPrep(shortMean(it.m), VPK_JA); } });
+}
+// タップした瞬間に音の出口を開けておく（iPhone で、あとから AI の声をすぐ鳴らせるように）
+function aiUnlock() {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+    try { const c = aiCtx(); if (c.state !== 'running') c.resume(); const b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0); } catch (e) {}
+}
+document.addEventListener('touchend', () => aiUnlock(), { passive: true });
+document.addEventListener('mousedown', () => aiUnlock(), { passive: true });
+function aiStop() { if (aiSrc) { try { aiSrc.onended = null; aiSrc.stop(); } catch (e) {} aiSrc = null; } if (aiAudio) { try { aiAudio.pause(); } catch (e) {} } }
 function sayAI(text, lang, cb) {
     const seq = ++speakSeq, voice = lang === 'ja' ? VPK_JA : VPK_EN, slang = lang === 'ja' ? 'ja-JP' : 'en-US';
-    let done = false; const fin = () => { if (done || seq !== speakSeq) return; done = true; if (cb) cb(); };
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-    vpkCacheGet(text, voice).then(buf => {
+    aiStop();
+    const play = ab => {
         if (seq !== speakSeq) return;
-        if (!buf) { speak(text, slang, cb); return; }   // AI の声がまだないときは、端末の声
-        if (!aiAudio) { aiAudio = new Audio(); aiAudio.setAttribute('playsinline', ''); }
-        const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }));
-        aiAudio.onended = () => { URL.revokeObjectURL(url); fin(); };
-        aiAudio.onerror = () => { URL.revokeObjectURL(url); if (seq === speakSeq) speak(text, slang, cb); };
-        aiAudio.src = url;
-        const pr = aiAudio.play(); if (pr && pr.catch) pr.catch(() => { if (seq === speakSeq) speak(text, slang, cb); });
-    });
+        if (!ab) { speak(text, slang, cb); return; }   // AI の声がまだないときは、端末の声
+        try {
+            const c = aiCtx(); if (c.state !== 'running') c.resume();
+            const s = c.createBufferSource(); s.buffer = ab; s.connect(c.destination);
+            s.onended = () => { if (aiSrc === s) aiSrc = null; if (seq === speakSeq && cb) cb(); };
+            aiSrc = s; s.start(0);
+        } catch (e) { speak(text, slang, cb); }
+    };
+    const v = aiBufs.get(voice + '|' + text);
+    if (v !== undefined && !(v && v.then)) play(v);   // 読み込み済み：待たずにすぐ鳴らす
+    else aiPrep(text, voice).then(play);
 }
 function stopAllAudio() {
     if (listenTimer) {
@@ -1804,7 +1839,7 @@ function stopAllAudio() {
         listenTimer = null;
     }
     speakSeq++; // 再生中の発話のコールバックを無効化
-    if (aiAudio) { try { aiAudio.pause(); aiAudio.onended = null; aiAudio.onerror = null; } catch (e) {} }
+    aiStop();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 }
 
@@ -1888,6 +1923,7 @@ function renderCard() {
     });
 
     loadNotesFor(item.n);
+    aiPrefetch();
 
     if (!isPaused) {
         sayAI(item.w, 'en', () => {
