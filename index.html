@@ -1642,6 +1642,14 @@ function gasJsonp(params, cb) {
     if (!key || !window.crypto || !crypto.subtle) { go(''); return; }
     crypto.subtle.digest('SHA-256', new TextEncoder().encode('tegaki-gas|' + key)).then(h => go(Array.prototype.map.call(new Uint8Array(h), b => ('0' + b.toString(16)).slice(-2)).join('').slice(0, 32))).catch(() => go(''));
 }
+// 一度作った声は、この端末にも置いておく（2回目からは Apps Script に聞かないので速い）
+const VPK_STORE = 'vpk-tts-v1';
+function vpkKey(text, voice) { return new Request(location.origin + '/__vpk__/' + voice + '/' + encodeURIComponent(text)); }
+function vpkCacheGet(text, voice) { try { return caches.open(VPK_STORE).then(c => c.match(vpkKey(text, voice))).then(r => r ? r.arrayBuffer() : null).catch(() => null); } catch (e) { return Promise.resolve(null); } }
+function vpkCachePut(text, voice, buf) { try { caches.open(VPK_STORE).then(c => c.put(vpkKey(text, voice), new Response(buf.slice(0)))).catch(() => {}); } catch (e) {} }
+function vpkGet(text, voice) {
+    return vpkCacheGet(text, voice).then(b => b ? { b: b, local: 1 } : new Promise(ok => vpkTts(text, voice, (buf, e) => { if (buf) vpkCachePut(text, voice, buf); ok({ b: buf, e: e }); })));
+}
 function vpkTts(text, voice, cb, tries) {
     gasJsonp({ tts: text, v: voice }, (d, e) => {
         if ((!d || (!d.ok && /^(429|5\d\d)/.test(String(d.error || '')))) && (tries || 0) < 2) { setTimeout(() => vpkTts(text, voice, cb, (tries || 0) + 1), 3000); return; }
@@ -1664,22 +1672,36 @@ function vpkWav(parts) {
     return new Blob([buf], { type: 'audio/wav' });
 }
 function vpkMsg(t) { const el = document.getElementById('vpk-msg'); if (el) el.textContent = t; }
-function vpkStop() { if (vpkAudio) { try { vpkAudio.pause(); } catch (e) {} } vpk = null; vpkGen++; const b = document.getElementById('btn-vpk'); if (b) b.textContent = '🎧 ポケットで聞く（画面を消しても流れる）'; }
+function vpkStop() { if (vpkAudio) { try { vpkAudio.pause(); vpkAudio.ontimeupdate = null; vpkAudio.onended = null; } catch (e) {} } vpk = null; vpkGen++; const b = document.getElementById('btn-vpk'); if (b) b.textContent = '🎧 ポケットで聞く（画面を消しても流れる）'; }
 async function vpkStart() {
     if (vpk) { vpkStop(); vpkMsg('ポケットで聞くのをやめました。'); return; }
     if (!gasUrlK()) { vpkMsg('AI の声を作るには、英文リーダーの「⚙ 翻訳の設定」で Apps Script を設定してください（Azure の声を使います）。'); return; }
     // タップした瞬間に音を出せるようにしておく（あとで再生できるように）
     if (!vpkAudio) { vpkAudio = new Audio(); vpkAudio.setAttribute('playsinline', ''); }
+    vpkAudio.ontimeupdate = null; vpkAudio.onended = null;   // 前回の再生の後始末（無音を鳴らしたときに「終わった」とならないように）
     try { vpkAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='; const pr = vpkAudio.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
     stopAllAudio(); isPaused = true;
     const list = studyQueue.slice(currentIndex, currentIndex + 200), my = ++vpkGen, startIdx = currentIndex;
     const silence = s => new Float32Array(Math.round(VPK_RATE * s));
-    const parts = [], times = []; let T = 0, fail = '';
+    const parts = [], times = []; let T = 0, fail = '', done = 0, local = 0;
+    // 4語ずつ同時に取りに行く（順番はそのまま）。この端末にある声はすぐ使う
+    const got = new Array(list.length);
+    let next = 0;
+    const worker = async () => {
+        while (next < list.length && my === vpkGen) {
+            const i = next++;
+            const en = await vpkGet(list[i].w, VPK_EN), ja = await vpkGet(shortMean(list[i].m) || '…', VPK_JA);
+            if (en.e) fail = en.e; if (ja.e) fail = fail || ja.e;
+            if (en.local && ja.local) local++;
+            got[i] = { en: en.b, ja: ja.b }; done++;
+            vpkMsg('🎧 声を用意しています… ' + done + ' / ' + list.length + '（この端末にあった声 ' + local + ' 語。ない声は AI が作ります）');
+        }
+    };
+    vpkMsg('🎧 声を用意しています…');
+    await Promise.all([worker(), worker(), worker(), worker()]);
     for (let i = 0; i < list.length; i++) {
         if (my !== vpkGen) return;
-        vpkMsg('🎧 声を用意しています… ' + i + ' / ' + list.length + '（初めての単語は AI が作ります。2回目からは速くなります）');
-        const en = await new Promise(ok => vpkTts(list[i].w, VPK_EN, (b, e) => { if (e) fail = e; ok(b); }));
-        const ja = await new Promise(ok => vpkTts(shortMean(list[i].m) || '…', VPK_JA, (b, e) => { if (e) fail = e; ok(b); }));
+        const en = got[i] && got[i].en, ja = got[i] && got[i].ja;
         if (!en) { vpkMsg('🎧 声を作れませんでした（' + fail + '）。' + (/noazkey|azkey/.test(fail) ? 'Azure の声の設定（AZURE_KEY）が必要です。' : /Nanami|voice/i.test(fail) ? 'Apps Script のコードを新しいものに貼り替えてください。' : '')); return; }
         const a1 = await vpkDecode(en), a2 = ja ? await vpkDecode(ja) : null;
         times.push(T);
@@ -1717,12 +1739,32 @@ async function vpkStart() {
 }
 function revealMeaningSilent() { const el = document.getElementById('txt-meaning'), btn = document.getElementById('btn-show-meaning'); if (el) el.classList.remove('hidden'); if (btn) btn.classList.add('hidden'); }
 function toFirstCard() { if (!studyQueue || !studyQueue.length) return; stopAllAudio(); currentIndex = 0; renderCard(); }
+// 設定の画面の選択（範囲・本・わからないのみ・理解度）を、この端末に覚えておく
+const SETUP_IDS = ['inpStart', 'inpEnd', 'selQuickRange', 'chkReview', 'selLevel', 'selSrc'];
+function saveSetup() {
+    const v = {};
+    SETUP_IDS.forEach(id => { const el = document.getElementById(id); if (!el) return; v[id] = el.type === 'checkbox' ? el.checked : el.value; });
+    try { localStorage.setItem(location.pathname + '|setup', JSON.stringify(v)); } catch (e) {}
+}
+function restoreSetup() {
+    let v = null; try { v = JSON.parse(localStorage.getItem(location.pathname + '|setup') || 'null'); } catch (e) {}
+    if (!v) return;
+    SETUP_IDS.forEach(id => {
+        const el = document.getElementById(id); if (!el || !(id in v)) return;
+        if (el.type === 'checkbox') el.checked = !!v[id];
+        else if (el.tagName === 'SELECT') { if ([...el.options].some(o => o.value === String(v[id]))) el.value = v[id]; }
+        else el.value = v[id];
+    });
+}
+document.addEventListener('change', e => { if (e.target && SETUP_IDS.indexOf(e.target.id) >= 0) saveSetup(); }, true);
+setTimeout(restoreSetup, 0);
 function goHome() {
     if (typeof vpkStop === 'function' && vpk) vpkStop();
     stopAllAudio();
     const sf = document.getElementById('sel-float'); if (sf) sf.style.display = 'none';
     isPaused = true;
     showScreen('screen-setup');
+    restoreSetup();
     renderResume();
     syncFlush(); syncPull();
 }
@@ -1749,6 +1791,7 @@ function saveStatus(n, status) {
 
 function startApp(mode, startAtN) {
     stopAllAudio();
+    saveSetup();
     const startNum = Number(document.getElementById('inpStart').value.trim()) || 1;
     const endNum = Number(document.getElementById('inpEnd').value.trim()) || 9999;
     const onlyReview = document.getElementById('chkReview').checked;
