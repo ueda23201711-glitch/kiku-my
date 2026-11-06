@@ -1,4 +1,4 @@
-const CACHE_NAME = "kikutan-my-v43";
+const CACHE_NAME = "kikutan-my-v44";
 const ASSETS = [
   "./",
   "./index.html",
@@ -28,16 +28,23 @@ self.addEventListener("fetch", (event) => {
   if (new URL(req.url).origin !== self.location.origin) return;
 
   // ページ本体はネット優先（更新がすぐ届くように）。オフライン時はキャッシュ。
+  // ただし電波が弱くて 4 秒たっても届かないときは、保存してある版をすぐ出す（真っ白のまま待たせない）
   if (req.mode === "navigate") {
-    event.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          return res;
-        })
-        .catch(() => caches.match(req).then((c) => c || caches.match("./index.html")))
-    );
+    const cached = () => caches.match(req).then((c) => c || caches.match("./index.html"));
+    const net = fetch(req).then((res) => {
+      if (res && res.ok) { const copy = res.clone(); caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)); }
+      return res;
+    });
+    event.respondWith(new Promise((resolve) => {
+      let done = false;
+      const fin = (r) => { if (!done && r) { done = true; resolve(r); } };
+      const t = setTimeout(() => cached().then((c) => { if (c) fin(c); }), 4000);
+      net.then((res) => {
+        clearTimeout(t);
+        if (res && res.ok) fin(res);
+        else cached().then((c) => fin(c || res));   // 404 など（更新の途中）は保存してある版
+      }).catch(() => { clearTimeout(t); cached().then((c) => fin(c || Response.error())); });
+    }));
     return;
   }
 
