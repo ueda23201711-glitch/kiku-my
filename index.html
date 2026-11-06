@@ -1795,10 +1795,15 @@ function aiTrim(ab) {
         return out;
     } catch (e) { return ab; }
 }
+// 英語と日本語で声の大きさがそろうように、音量（RMS）を同じくらいに合わせる
+function aiGain(ab) {
+    try { const d = ab.getChannelData(0); let sq = 0, pk = 0; for (let i = 0; i < d.length; i++) { const x = Math.abs(d[i]); sq += x * x; if (x > pk) pk = x; }
+        const rms = Math.sqrt(sq / d.length); if (!rms || !pk) return 1; return Math.max(0.5, Math.min(3, 0.12 / rms, 0.98 / pk)); } catch (e) { return 1; }
+}
 function aiPrep(text, voice) {
     const key = voice + '|' + text;
     if (aiBufs.has(key)) { const v = aiBufs.get(key); return v && v.then ? v : Promise.resolve(v); }
-    const pr = vpkCacheGet(text, voice).then(buf => buf ? vpkDecode(buf) : null).then(ab => { const v = ab ? aiTrim(ab) : null; aiBufs.set(key, v); return v; });
+    const pr = vpkCacheGet(text, voice).then(buf => buf ? vpkDecode(buf) : null).then(ab => { const v = ab ? aiTrim(ab) : null; if (v) v._g = aiGain(v); aiBufs.set(key, v); return v; });
     aiBufs.set(key, pr);
     if (aiBufs.size > 80) aiBufs.delete(aiBufs.keys().next().value);
     return pr;
@@ -1824,7 +1829,7 @@ function sayAI(text, lang, cb) {
         if (!ab) { speak(text, slang, cb); return; }   // AI の声がまだないときは、端末の声
         try {
             const c = aiCtx(); if (c.state !== 'running') c.resume();
-            const s = c.createBufferSource(); s.buffer = ab; s.connect(c.destination);
+            const s = c.createBufferSource(); s.buffer = ab; const g = c.createGain(); g.gain.value = ab._g || 1; s.connect(g); g.connect(c.destination);
             s.onended = () => { if (aiSrc === s) aiSrc = null; if (seq === speakSeq && cb) cb(); };
             aiSrc = s; s.start(0);
         } catch (e) { speak(text, slang, cb); }
