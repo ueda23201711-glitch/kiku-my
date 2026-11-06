@@ -1624,6 +1624,14 @@ function shortMean(m) {
    画面を消しても止まらない（1本の音声を流すだけなので）。声は英文リーダーと同じ Apps Script で作り、ドライブに保存される ===== */
 const VPK_EN = 'Ava', VPK_JA = 'Nanami', VPK_RATE = 16000;
 let vpk = null, vpkAudio = null, vpkCtx = null, vpkGen = 0;
+// この端末に Apps Script のアドレスがなければ、クラウド（英文リーダーが保存した memos/合言葉/settings/gas）から取ってくる
+function gasEnsure() {
+    if (gasUrlK()) return Promise.resolve(gasUrlK());
+    const key = cloudKey(); if (!key) return Promise.resolve('');
+    return new Promise(ok => cloudReq('GET', '/memos/' + key + '/settings/gas', undefined, (err, u) => {
+        if (!err && typeof u === 'string' && /^https:\/\/script\.google\.com\//.test(u)) { try { localStorage.setItem('eibun_gas', u); } catch (e) {} ok(u); } else ok('');
+    }));
+}
 function gasUrlK() { let u = ''; try { u = localStorage.getItem('eibun_gas') || ''; } catch (e) {} return /^https:\/\//.test(u) ? u : ''; }
 function gasJsonp(params, cb) {
     const url = gasUrlK(); if (!url) { cb(null, 'nogas'); return; }
@@ -1675,6 +1683,7 @@ function vpkMsg(t) { const el = document.getElementById('vpk-msg'); if (el) el.t
 function vpkStop() { if (vpkAudio) { try { vpkAudio.pause(); vpkAudio.ontimeupdate = null; vpkAudio.onended = null; } catch (e) {} } vpk = null; vpkGen++; const b = document.getElementById('btn-vpk'); if (b) b.textContent = '🎧 ポケットで聞く（画面を消しても流れる）'; }
 async function vpkStart() {
     if (vpk) { vpkStop(); vpkMsg('ポケットで聞くのをやめました。'); return; }
+    await gasEnsure();
     if (!gasUrlK()) { vpkMsg('AI の声を作るには、英文リーダーの「⚙ 翻訳の設定」で Apps Script を設定してください（Azure の声を使います）。'); return; }
     // タップした瞬間に音を出せるようにしておく（あとで再生できるように）
     if (!vpkAudio) { vpkAudio = new Audio(); vpkAudio.setAttribute('playsinline', ''); }
@@ -2895,8 +2904,9 @@ function dictLookup(word, cb) {
 }
 // 辞書にない語は、英文リーダーと同じ Apps Script で訳す（設定してあれば）
 const GAS_LS = 'eibun_gas';
-function gasTranslate(text, cb) {
+function gasTranslate(text, cb, again) {
     let url = ''; try { url = localStorage.getItem(GAS_LS) || ''; } catch (e) {}
+    if (!url && !again) { gasEnsure().then(u => { if (u) gasTranslate(text, cb, true); else cb(''); }); return; }
     const key = cloudKey();
     if (!url || !/^https:\/\//.test(url) || !window.crypto || !crypto.subtle || !window.TextEncoder) { cb(''); return; }
     const go = (tk) => {
