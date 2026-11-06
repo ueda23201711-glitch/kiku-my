@@ -51,6 +51,18 @@ html = mustReplace(html,
     "if (window.speechSynthesis.addEventListener) { window.speechSynthesis.addEventListener('voiceschanged', loadVoices); } else { window.speechSynthesis.onvoiceschanged = loadVoices; }",
     'voiceschanged');
 
+// 選択肢の一覧を配列にする書き方（[...x.options]）は、変換後の iOS 9 で正しく動かないので書き換える
+html = html.replace(/\[\.\.\.(\w+)\.options\]/g, 'Array.prototype.slice.call($1.options)');
+
+// 「ポケットで聞く」は iOS 9 に無い仕組み（Cache Storage など）を使うので、使えないことを伝える
+html = html.replace('async function vpkStart() {', "async function vpkStart() {\n    if (!window.caches || !(window.AudioContext || window.webkitAudioContext)) { alert('この端末（古い iPad）では「ポケットで聞く」は使えません。ふつうの聞き流しモードを使ってください。'); return; }");
+
+// iOS 9 の Safari はファイルの保存（download）ができないので、CSV は文字で表示してコピーしてもらう
+html = mustReplace(html,
+    "const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;",
+    "if (!('download' in document.createElement('a'))) { document.getElementById('prompt-box').style.display = 'block'; document.getElementById('pr-text').value = rows.join('\\n'); document.getElementById('pr-msg').textContent = 'この iPad ではファイルに保存できないので、CSV の中身を表示しています。「コピー」でメモやメールに貼り付けてください。'; return; }\n    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;",
+    'csv fallback');
+
 // Service Worker は iOS 9 に無いので登録しない（念のため）
 html = html.replace(/if \("serviceWorker" in navigator\)/, 'if (false && "serviceWorker" in navigator)');
 
@@ -65,6 +77,10 @@ const POLYFILLS = `
   if (!String.prototype.padStart) String.prototype.padStart = function(n,c){ var s=String(this); c=c===undefined?' ':String(c); while(s.length<n) s=c+s; return s.slice(-Math.max(n,String(this).length)); };
   if (!Array.prototype.includes) Array.prototype.includes = function(v){ return this.indexOf(v) !== -1; };
   if (!String.prototype.includes) String.prototype.includes = function(v){ return this.indexOf(v) !== -1; };
+  // iOS 9 には fetch が無い：辞書ファイルなどを読むための、XMLHttpRequest を使った簡単な代わり
+  if (!window.fetch) window.fetch = function(url){ return new Promise(function(ok, ng){ try { var x = new XMLHttpRequest(); x.open('GET', String(url), true);
+      x.onload = function(){ var t = x.responseText; ok({ ok: x.status >= 200 && x.status < 300, status: x.status, text: function(){ return Promise.resolve(t); }, json: function(){ return new Promise(function(a, b){ try { a(JSON.parse(t)); } catch (e) { b(e); } }); } }); };
+      x.onerror = function(){ ng(new Error('network')); }; x.send(); } catch (e) { ng(e); } }); };
 })();
 `;
 
@@ -152,13 +168,18 @@ html = html.replace(/<style>([\s\S]*?)<\/style>/, (all, css) => {
     return '<style>' + out + extra + '</style>';
 });
 
-// インライン style の gap
-html = mustReplace(html,
-    '<div style="display: flex; align-items: center; gap: 5px;">',
-    '<div class="flex-gap-5" style="display: flex; align-items: center;">', 'inline gap 1');
-html = mustReplace(html,
-    '<div class="filter-bar" style="margin-bottom:10px; display:flex; gap:5px;">',
-    '<div class="filter-bar flex-gap-5" style="margin-bottom:10px; display:flex;">', 'inline gap 2');
+// インライン style の gap（Safari 9 は flex の gap に未対応）→ data-gap を付けて、子要素の間を margin で空ける
+const gapSizes = {};
+html = html.replace(/<(\w+)([^<>]*?)\sstyle="([^"]*?)\bgap:\s*(\d+)px;?([^"]*)"/g, (all, tag, pre, s1, n, s2) => {
+    const st = (s1 + s2).trim();
+    const col = /flex-direction:\s*column/.test(st) ? 'c' : 'r';
+    gapSizes[n + col] = 1;
+    return '<' + tag + pre + ' data-gap="' + n + col + '" style="' + st + '"';
+});
+html = html.replace('</style>', Object.keys(gapSizes).map(k => {
+    const n = parseInt(k, 10), col = k.slice(-1) === 'c';
+    return '[data-gap="' + k + '"] > * + * { ' + (col ? 'margin-top' : 'margin-left') + ': ' + n + 'px; }' + (col ? '' : ' [data-gap="' + k + '"] > * { margin-bottom: ' + Math.min(n, 6) + 'px; }');
+}).join('\n') + '\n</style>');
 
 // iOS 9 では声の設定場所が違う
 html = html.replace('iPhoneの「設定」→「アクセシビリティ」→「読み上げコンテンツ」→「声」→「英語」で、「拡張」や「プレミアム」の声をダウンロードしてください。',

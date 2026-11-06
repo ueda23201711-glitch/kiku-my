@@ -111,6 +111,9 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
     .level-btn { width: 36px; height: 36px; border-radius: 50%; border: 2px solid #ced4da; background: white; color: #666; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; }
     .level-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
 
+    #list-table td { padding-top: 6px; padding-bottom: 6px; }
+    #screen-list .table-container { flex: none; overflow: visible; }   /* 一覧は画面ごとスクロール（枠の中だけで狭くスクロールしない） */
+    #list-table .lm { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .table-container { flex: 1; overflow-y: auto; background: white; border-radius: 12px; border: 1px solid #eee; }
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     th { position: -webkit-sticky; position: sticky; top: 0; background: #f8f9fa; z-index: 1; padding: 10px; text-align: left; border-bottom: 2px solid #dee2e6; }
@@ -602,6 +605,8 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
 
 
 /* === Allow text selection on word/meaning (iPhone long-press copy) === */
+/* 訳が長いとき、下の本の名前と重ならないように（縮ませない） */
+#txt-word, #txt-meaning, #txt-src, #btn-edit-meaning { flex-shrink: 0; }
 .word-text, .meaning-text {
   -webkit-user-select: text !important;
   user-select: text !important;
@@ -622,7 +627,10 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
     .controls { display: -webkit-flex; display: flex; -webkit-justify-content: space-between; justify-content: space-between; }
     .controls > * { width: calc(50% - 5px); }
     .flex-gap-5 > * + * { margin-left: 5px; }
-    </style>
+    [data-gap="5r"] > * + * { margin-left: 5px; } [data-gap="5r"] > * { margin-bottom: 5px; }
+[data-gap="8r"] > * + * { margin-left: 8px; } [data-gap="8r"] > * { margin-bottom: 6px; }
+[data-gap="6r"] > * + * { margin-left: 6px; } [data-gap="6r"] > * { margin-bottom: 6px; }
+</style>
 
 <link rel="manifest" href="./app-v2.webmanifest">
 
@@ -687,7 +695,7 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
         <div class="panel">
             <div class="config-row">
                 <label>学習範囲 (No.)</label>
-                <div class="flex-gap-5" style="display: flex; align-items: center;">
+                <div data-gap="5r" style="display: flex; align-items: center;">
                     <input type="number" id="inpStart" value="1" min="1" max="5000"> 〜 <input type="number" id="inpEnd" value="100" min="1" max="5000">
                 </div>
             </div>
@@ -770,7 +778,9 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
         <button class="btn-primary btn-block" onclick="startApp('card')">フラッシュカード開始</button>
         <button class="btn-secondary btn-block" onclick="startApp('listen')">聞き流しモード開始</button>
 
+        <button class="btn-neutral btn-block" onclick="openAddWords()">＋ 単語を追加（英単語だけ入れれば訳は自動）</button>
         <button class="btn-neutral btn-block" onclick="showList()">学習データ一覧 / 管理</button>
+        <button class="btn-neutral btn-block" onclick="showSrcList()">📚 本・英文ごとの単語一覧</button>
         <div style="text-align:center; font-size:0.85rem; color:#999; margin-top:5px;">
             登録数: <span id="totalCount">-</span>語
         </div>
@@ -780,13 +790,14 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
     <div id="screen-study" class="screen">
         <div style="display:flex; justify-content:space-between; align-items:center; color:#666; font-size:0.85rem; margin-bottom:8px;">
             <span id="progress-text">1 / 10</span>
-            <button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="goHome()" id="btn-exit">中断</button>
+            <span><button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="toFirstCard()" title="いま勉強している単語の、最初のカードへ">⏮ 最初へ</button> <button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="cardToList()" title="この単語の本・英文の単語一覧へ（この単語の行を表示）">📚 一覧へ</button> <button class="btn-outline" style="padding:4px 10px; font-size:0.75rem; border-radius:20px;" onclick="goHome()" id="btn-exit">← 設定に戻る</button></span>
         </div>
 
         <div class="nav-controls">
             <button class="nav-btn" onclick="manualMove(-1)">← 前</button>
             <button class="nav-btn" onclick="manualMove(1)">次 →</button>
         </div>
+        <div id="to-first" class="hidden" style="text-align:center; margin:-4px 0 8px;"><button class="btn-primary" style="padding:8px 18px; border-radius:20px;" onclick="toFirstCard()">⏮ 最初の単語に戻る</button></div>
 
         <div class="flashcard" id="card-area" aria-label="flashcard">
             <div id="swipe-hint"></div>
@@ -796,6 +807,7 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
             <div id="txt-word" class="word-text" onclick="playWord(event)">Word</div>
             <div id="txt-meaning" class="meaning-text hidden">意味</div>
             <div id="txt-src" style="font-size:0.8rem; color:#999; margin-top:6px;"></div>
+            <button id="btn-edit-meaning" class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="editMeaning(null, event)" title="この単語の日本語訳を書き換える">✎ 訳を直す</button>
 
             <button id="btn-show-meaning" class="btn-neutral" style="margin-top:10px; font-size:0.85rem; padding:8px 18px; border-radius:20px;" onclick="revealMeaning()">
                 日本語訳を表示
@@ -862,14 +874,19 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
         <div id="controls-listen" class="hidden text-center">
             <p id="listen-status-label" style="color:var(--primary); font-weight:bold; font-size:0.9rem; margin:8px 0;">AUTO PLAYING...</p>
             <button class="btn-neutral btn-block" onclick="togglePause()" id="btn-pause">一時停止</button>
+            <button class="btn-primary btn-block" style="margin-top:8px" onclick="vpkStart()" id="btn-vpk">🎧 ポケットで聞く（画面を消しても流れる）</button>
+            <div id="vpk-msg" style="font-size:0.82rem; color:#666; margin-top:6px; line-height:1.5;"></div>
         </div>
     </div>
 
     <!-- 3. List/Manage Screen -->
     <div id="screen-list" class="screen">
-        <h2>データ一覧 / 編集</h2>
-        <div class="filter-bar flex-gap-5" style="margin-bottom:10px; display:flex;">
-            <select id="selListLevelFilter" onchange="renderListTable()" style="flex:1">
+        <div data-gap="8r" style="display:flex; align-items:center;  margin-bottom:6px;">
+            <button class="btn-outline" style="padding:6px 12px; font-size:0.85rem; border-radius:20px; white-space:nowrap;" onclick="goHome()">← 設定に戻る</button>
+            <h2 style="margin:0; flex:1; text-align:center;">データ一覧 / 編集</h2>
+        </div>
+        <div class="filter-bar" data-gap="5r" style="margin-bottom:10px; display:flex; flex-wrap:wrap;">
+            <select id="selListLevelFilter" onchange="renderListTable()" style="flex:1 1 30%; min-width:0;">
                 <option value="all">全レベルを表示</option>
                 <option value="0">LV.0 (未着手)</option>
                 <option value="1">LV.1</option>
@@ -878,24 +895,45 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
                 <option value="4">LV.4</option>
                 <option value="5">LV.5 (完璧)</option>
             </select>
-            <select id="selListSrc" class="hidden" onchange="renderListTable()" style="flex:1"></select>
-            <select id="selListResultFilter" onchange="renderListTable()" style="flex:1">
+            <select id="selListSrc" class="hidden" onchange="renderListTable()" style="flex:1 1 45%; min-width:0; max-width:100%;"></select>
+            <select id="selGrpSort" class="hidden" onchange="grpSortSave(); renderListTable()" style="flex:1 1 100%; min-width:0; max-width:100%; font-weight:bold;"><option value="new">並び：新しく保存した本から</option><option value="fav">並び：★の多い本から</option><option value="name">並び：題名の順</option><option value="count">並び：単語の多い本から</option></select>
+            <select id="selListResultFilter" onchange="renderListTable()" style="flex:1 1 30%; min-width:0;">
                 <option value="all">全結果</option>
                 <option value="unknown">「わからない」のみ</option>
                 <option value="new">未回答のみ</option>
             </select>
         </div>
+        <div id="sel-bar" data-gap="6r" style="display:flex; flex-wrap:wrap;  align-items:center; margin:0 0 8px;">
+            <button class="tool-btn" style="padding:6px 10px" onclick="selAll(true)">☑ 表示中を全選択</button>
+            <button class="tool-btn" style="padding:6px 10px" onclick="selAll(false)">☐ 選択を解除</button>
+            <span id="sel-n" style="font-size:0.85rem; color:#666;">0 語を選択</span>
+            <select id="sel-lv" onchange="setLvBulk(this)" style="font-size:0.85rem; padding:5px 6px;"><option value="">選んだ単語の LV をまとめて…</option><option value="0">LV.0 にする</option><option value="1">LV.1 にする</option><option value="2">LV.2 にする</option><option value="3">LV.3 にする</option><option value="4">LV.4 にする</option><option value="5">LV.5（完璧）にする</option></select>
+            <button class="tool-btn" style="padding:6px 10px" onclick="exportCsv()">⬇ CSV で書き出す</button>
+            <button class="tool-btn" style="padding:6px 10px" onclick="openPrompt()">🤖 勉強用の英文を作るプロンプト</button>
+        </div>
+        <div id="prompt-box" style="display:none; background:#fff; border:1px solid #ddd; border-radius:10px; padding:10px; margin:0 0 10px;">
+            <div data-gap="6r" style="display:flex; flex-wrap:wrap;  margin-bottom:6px;">
+                <select id="pr-style" onchange="buildPrompt()"><option value="story">物語</option><option value="dialog">会話</option><option value="news">ニュース記事</option><option value="email">ビジネスメール</option><option value="essay">エッセイ</option></select>
+                <select id="pr-len" onchange="buildPrompt()"><option value="300">短め（約300語）</option><option value="600" selected>ふつう（約600語）</option><option value="1000">長め（約1000語）</option></select>
+                <select id="pr-lv" onchange="buildPrompt()"><option value="B1">やさしめ（CEFR B1）</option><option value="B2" selected>中級（CEFR B2）</option><option value="C1">上級（CEFR C1）</option></select>
+                <select id="pr-rep" onchange="buildPrompt()"><option value="1">各語1回以上</option><option value="2" selected>各語2回以上</option><option value="3">各語3回以上</option></select>
+            </div>
+            <textarea id="pr-text" rows="9" readonly style="width:100%; box-sizing:border-box; font-size:13px;"></textarea>
+            <div data-gap="6r" style="margin-top:6px; display:flex;  flex-wrap:wrap; align-items:center;"><button class="btn-primary" style="padding:6px 14px" onclick="copyPrompt()">📋 コピー</button> <button class="btn-neutral" style="padding:6px 14px" onclick="document.getElementById('prompt-box').style.display='none'">閉じる</button> <span id="pr-msg" style="font-size:0.85rem; color:#666;"></span></div>
+            <div style="font-size:0.78rem; color:#777; margin-top:6px; line-height:1.5;">コピーして ChatGPT・Claude・Gemini などに貼り付けます。できた英文を英文リーダーに貼り付けて読み込むと、選んだ単語が黄色（My単語帳に保存済み）で表示されます。</div>
+        </div>
         <div class="table-container">
             <table id="list-table">
-                <thead><tr><th>No</th><th>単語 / 意味</th><th style="text-align:center">LV</th></tr></thead>
+                <thead><tr><th style="width:28px"></th><th>No</th><th>単語 / 意味</th><th style="text-align:center">LV</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
-        <div class="panel" style="margin-top:10px;">
+        <details class="panel" style="margin-top:10px;">
+            <summary style="cursor:pointer; font-size:0.9rem; color:#666; padding:4px 0;">📝 データを直接編集（TAB 区切り）・全データ初期化</summary>
             <textarea id="data-editor" placeholder="word	meaning	number (TAB区切り)"></textarea>
             <button class="btn-secondary btn-block" onclick="updateMasterData()">データを更新保存</button>
             <button class="btn-danger btn-block" onclick="resetAllData()">⚠ 全データ初期化</button>
-        </div>
+        </details>
         <button class="btn-primary btn-block" onclick="goHome()">設定に戻る</button>
     </div>
 
@@ -918,7 +956,15 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
   if (!String.prototype.padStart) String.prototype.padStart = function(n,c){ var s=String(this); c=c===undefined?' ':String(c); while(s.length<n) s=c+s; return s.slice(-Math.max(n,String(this).length)); };
   if (!Array.prototype.includes) Array.prototype.includes = function(v){ return this.indexOf(v) !== -1; };
   if (!String.prototype.includes) String.prototype.includes = function(v){ return this.indexOf(v) !== -1; };
+  // iOS 9 には fetch が無い：辞書ファイルなどを読むための、XMLHttpRequest を使った簡単な代わり
+  if (!window.fetch) window.fetch = function(url){ return new Promise(function(ok, ng){ try { var x = new XMLHttpRequest(); x.open('GET', String(url), true);
+      x.onload = function(){ var t = x.responseText; ok({ ok: x.status >= 200 && x.status < 300, status: x.status, text: function(){ return Promise.resolve(t); }, json: function(){ return new Promise(function(a, b){ try { a(JSON.parse(t)); } catch (e) { b(e); } }); } }); };
+      x.onerror = function(){ ng(new Error('network')); }; x.send(); } catch (e) { ng(e); } }); };
 })();
+function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i.return) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
+function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
+function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
+function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
 // === Storage namespace (per series) ===
 var APP_PREFIX = "kikutan_my__";
 var k = function k(name) {
@@ -1307,13 +1353,20 @@ function renderSrcOptions() {
     o0.value = '';
     o0.textContent = i === 0 ? 'すべての本・英文の単語' : '全部の本・英文';
     el.appendChild(o0);
+    if (i === 1) {
+      var og = document.createElement('option');
+      og.value = '__group__';
+      og.textContent = '📚 本・英文ごとにまとめて表示';
+      el.appendChild(og);
+    }
     var none = words.filter(function (w) {
       return !w.s;
     }).length;
     list.forEach(function (x) {
       var o = document.createElement('option');
       o.value = x.s;
-      o.textContent = '📚 ' + x.s + '（' + x.c + '語）';
+      var fv = srcFav(x.s);
+      o.textContent = '📚 ' + (fv ? '★'.repeat(fv) + ' ' : '') + x.s + '（' + x.c + '語）';
       el.appendChild(o);
     });
     if (none) {
@@ -1328,7 +1381,7 @@ function renderSrcOptions() {
   srcNote();
 }
 function srcMatch(item, v) {
-  return !v || (v === '__none__' ? !item.s : item.s === v);
+  return !v || v === '__group__' || (v === '__none__' ? !item.s : item.s === v);
 }
 function srcNote() {
   var v = document.getElementById('selSrc').value,
@@ -2065,13 +2118,788 @@ function showScreen(id) {
   });
   document.getElementById(id).classList.add('active');
 }
-function goHome() {
+
+// 聞き流し用：日本語訳を1つだけ、短く（〈 〉や（ ）の説明を除いて、最初の意味だけ）
+function shortMean(m) {
+  var t = String(m || '').replace(/〈[^〉]*〉|《[^》]*》|\[[^\]]*\]|【[^】]*】|\([^)]*\)|（[^）]*）|『|』|「|」/g, '');
+  var parts = t.split(/[、,，;；\/／・]|\s{2,}/).map(function (x) {
+    return x.replace(/^[\s…\.〜～]+|[\s…\.]+$/g, '').replace(/[A-Za-z]+/g, '').trim();
+  }).filter(function (x) {
+    return x.length >= 1;
+  });
+  t = (parts[0] || String(m || '').replace(/[A-Za-z]/g, '').trim()).replace(/^を(?=..)/, ''); // 「〈物〉を取り散らかす」→「取り散らかす」
+  return t.length > 16 ? t.slice(0, 16) : t;
+}
+/* ===== 🎧 ポケットで聞く（単語）：英単語（AI の英語の声）と短い訳（AI の日本語の声）を、1本の音声にして流す。
+   画面を消しても止まらない（1本の音声を流すだけなので）。声は英文リーダーと同じ Apps Script で作り、ドライブに保存される ===== */
+var VPK_EN = 'Ava',
+  VPK_JA = 'Nanami',
+  VPK_RATE = 16000;
+var vpk = null,
+  vpkAudio = null,
+  vpkCtx = null,
+  vpkGen = 0;
+// この端末に Apps Script のアドレスがなければ、クラウド（英文リーダーが保存した memos/合言葉/settings/gas）から取ってくる
+function gasEnsure() {
+  if (gasUrlK()) return Promise.resolve(gasUrlK());
+  var key = cloudKey();
+  if (!key) return Promise.resolve('');
+  return new Promise(function (ok) {
+    return cloudReq('GET', '/memos/' + key + '/settings/gas', undefined, function (err, u) {
+      if (!err && typeof u === 'string' && /^https:\/\/script\.google\.com\//.test(u)) {
+        try {
+          localStorage.setItem('eibun_gas', u);
+        } catch (e) {}
+        ok(u);
+      } else ok('');
+    });
+  });
+}
+function gasUrlK() {
+  var u = '';
+  try {
+    u = localStorage.getItem('eibun_gas') || '';
+  } catch (e) {}
+  return /^https:\/\//.test(u) ? u : '';
+}
+function gasJsonp(params, cb) {
+  var url = gasUrlK();
+  if (!url) {
+    cb(null, 'nogas');
+    return;
+  }
+  var key = cloudKey();
+  var go = function go(tk) {
+    var name = '__vpk' + Date.now() + Math.floor(Math.random() * 1e6);
+    var done = false;
+    var sc = document.createElement('script');
+    var fin = function fin(d, e) {
+      if (done) return;
+      done = true;
+      try {
+        delete window[name];
+      } catch (x) {
+        window[name] = undefined;
+      }
+      if (sc.parentNode) sc.parentNode.removeChild(sc);
+      cb(d, e);
+    };
+    window[name] = function (d) {
+      return fin(d, null);
+    };
+    var qs = Object.keys(params).map(function (k) {
+      return k + '=' + encodeURIComponent(params[k]);
+    }).join('&');
+    sc.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + (tk ? 'tk=' + tk + '&' : '') + qs + '&callback=' + name;
+    sc.onerror = function () {
+      return fin(null, 'net');
+    };
+    setTimeout(function () {
+      return fin(null, 'timeout');
+    }, 90000);
+    document.head.appendChild(sc);
+  };
+  if (!key || !window.crypto || !crypto.subtle) {
+    go('');
+    return;
+  }
+  crypto.subtle.digest('SHA-256', new TextEncoder().encode('tegaki-gas|' + key)).then(function (h) {
+    return go(Array.prototype.map.call(new Uint8Array(h), function (b) {
+      return ('0' + b.toString(16)).slice(-2);
+    }).join('').slice(0, 32));
+  }).catch(function () {
+    return go('');
+  });
+}
+// 一度作った声は、この端末にも置いておく（2回目からは Apps Script に聞かないので速い）
+var VPK_STORE = 'vpk-tts-v1';
+function vpkKey(text, voice) {
+  return new Request(location.origin + '/__vpk__/' + voice + '/' + encodeURIComponent(text));
+}
+function vpkCacheGet(text, voice) {
+  try {
+    return caches.open(VPK_STORE).then(function (c) {
+      return c.match(vpkKey(text, voice));
+    }).then(function (r) {
+      return r ? r.arrayBuffer() : null;
+    }).catch(function () {
+      return null;
+    });
+  } catch (e) {
+    return Promise.resolve(null);
+  }
+}
+function vpkCachePut(text, voice, buf) {
+  try {
+    caches.open(VPK_STORE).then(function (c) {
+      return c.put(vpkKey(text, voice), new Response(buf.slice(0)));
+    }).catch(function () {});
+  } catch (e) {}
+}
+function vpkGet(text, voice) {
+  return vpkCacheGet(text, voice).then(function (b) {
+    return b ? {
+      b: b,
+      local: 1
+    } : new Promise(function (ok) {
+      return vpkTts(text, voice, function (buf, e) {
+        if (buf) vpkCachePut(text, voice, buf);
+        ok({
+          b: buf,
+          e: e
+        });
+      });
+    });
+  });
+}
+function vpkTts(text, voice, cb, tries) {
+  gasJsonp({
+    tts: text,
+    v: voice
+  }, function (d, e) {
+    if ((!d || !d.ok && /^(429|5\d\d)/.test(String(d.error || ''))) && (tries || 0) < 2) {
+      setTimeout(function () {
+        return vpkTts(text, voice, cb, (tries || 0) + 1);
+      }, 3000);
+      return;
+    }
+    if (!d || !d.ok || !d.a) {
+      cb(null, d && d.error || e || 'error');
+      return;
+    }
+    try {
+      var bin = atob(d.a),
+        u = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+      cb(u.buffer, null);
+    } catch (x) {
+      cb(null, 'decode');
+    }
+  });
+}
+function vpkDecode(buf, again) {
+  if (!vpkCtx || vpkCtx.state === 'closed') vpkCtx = new (window.AudioContext || window.webkitAudioContext)();
+  var c = vpkCtx;
+  return new Promise(function (ok) {
+    var fin = false;
+    var f = function f(ab) {
+      if (!fin) {
+        fin = true;
+        ok(ab);
+      }
+    };
+    try {
+      var pr = c.decodeAudioData(buf.slice(0), function (ab) {
+        return f(ab);
+      }, function () {
+        return f(null);
+      });
+      if (pr && pr.then) pr.then(f, function () {
+        return f(null);
+      });
+    } catch (e) {
+      f(null);
+    }
+  }).then(function (ab) {
+    return !ab && !again && c !== vpkCtx ? vpkDecode(buf, true) : ab;
+  }); // 途中で音の出口を作り直したときは、もう一度
+}
+function vpkPcm(ab) {
+  var src = ab.getChannelData(0),
+    r = ab.sampleRate / VPK_RATE,
+    n = Math.floor(src.length / r),
+    out = new Float32Array(n);
+  for (var i = 0; i < n; i++) {
+    var x = i * r,
+      _k = Math.floor(x),
+      f = x - _k;
+    out[i] = src[_k] * (1 - f) + (_k + 1 < src.length ? src[_k + 1] : 0) * f;
+  }
+  return out;
+}
+function vpkWav(parts) {
+  var n = 0;
+  parts.forEach(function (q) {
+    n += q.length;
+  });
+  var buf = new ArrayBuffer(44 + n * 2),
+    v = new DataView(buf);
+  var o = 0;
+  var ws = function ws(t) {
+      for (var i = 0; i < t.length; i++) v.setUint8(o++, t.charCodeAt(i));
+    },
+    u32 = function u32(x) {
+      v.setUint32(o, x, true);
+      o += 4;
+    },
+    u16 = function u16(x) {
+      v.setUint16(o, x, true);
+      o += 2;
+    };
+  ws('RIFF');
+  u32(36 + n * 2);
+  ws('WAVE');
+  ws('fmt ');
+  u32(16);
+  u16(1);
+  u16(1);
+  u32(VPK_RATE);
+  u32(VPK_RATE * 2);
+  u16(2);
+  u16(16);
+  ws('data');
+  u32(n * 2);
+  var i16 = new Int16Array(buf, 44, n);
+  var j = 0;
+  parts.forEach(function (q) {
+    for (var i = 0; i < q.length; i++) {
+      var x = q[i];
+      i16[j++] = x <= -1 ? -32768 : x >= 1 ? 32767 : x < 0 ? x * 32768 : x * 32767;
+    }
+  });
+  return new Blob([buf], {
+    type: 'audio/wav'
+  });
+}
+function vpkMsg(t) {
+  var el = document.getElementById('vpk-msg');
+  if (el) el.textContent = t;
+}
+function vpkStop() {
+  if (vpkAudio) {
+    try {
+      vpkAudio.pause();
+      vpkAudio.ontimeupdate = null;
+      vpkAudio.onended = null;
+      vpkAudio.removeAttribute('src');
+      vpkAudio.load();
+    } catch (e) {}
+  }
+  if (vpk && vpk.url) {
+    try {
+      URL.revokeObjectURL(vpk.url);
+    } catch (e) {}
+  }
+  // iPhone：聞き流しの「再生中の音」を手放す（そのままだと、あとのフラッシュカードの声が出なくなることがある）
+  if ('mediaSession' in navigator) {
+    try {
+      ['play', 'pause', 'nexttrack', 'previoustrack'].forEach(function (a) {
+        return navigator.mediaSession.setActionHandler(a, null);
+      });
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = 'none';
+    } catch (e) {}
+  }
+  aiFresh = true;
+  vpk = null;
+  vpkGen++;
+  var b = document.getElementById('btn-vpk');
+  if (b) b.textContent = '🎧 ポケットで聞く（画面を消しても流れる）';
+}
+function vpkStart() {
+  return _vpkStart.apply(this, arguments);
+}
+function _vpkStart() {
+  _vpkStart = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2() {
+    var _pr, list, my, startIdx, silence, parts, times, T, fail, done, local, got, next, worker, i, en, ja, a1, a2, pcm, pcm2, url, au, jump, pr, b, _t;
+    return _regenerator().w(function (_context2) {
+      while (1) switch (_context2.n) {
+        case 0:
+          if (!(!window.caches || !(window.AudioContext || window.webkitAudioContext))) {
+            _context2.n = 1;
+            break;
+          }
+          alert('この端末（古い iPad）では「ポケットで聞く」は使えません。ふつうの聞き流しモードを使ってください。');
+          return _context2.a(2);
+        case 1:
+          if (!vpk) {
+            _context2.n = 2;
+            break;
+          }
+          vpkStop();
+          vpkMsg('ポケットで聞くのをやめました。');
+          return _context2.a(2);
+        case 2:
+          _context2.n = 3;
+          return gasEnsure();
+        case 3:
+          if (gasUrlK()) {
+            _context2.n = 4;
+            break;
+          }
+          vpkMsg('AI の声を作るには、英文リーダーの「⚙ 翻訳の設定」で Apps Script を設定してください（Azure の声を使います）。');
+          return _context2.a(2);
+        case 4:
+          // タップした瞬間に音を出せるようにしておく（あとで再生できるように）
+          if (!vpkAudio) {
+            vpkAudio = new Audio();
+            vpkAudio.setAttribute('playsinline', '');
+          }
+          vpkAudio.ontimeupdate = null;
+          vpkAudio.onended = null; // 前回の再生の後始末（無音を鳴らしたときに「終わった」とならないように）
+          try {
+            vpkAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+            _pr = vpkAudio.play();
+            if (_pr && _pr.catch) _pr.catch(function () {});
+          } catch (e) {}
+          stopAllAudio();
+          isPaused = true;
+          list = studyQueue.slice(currentIndex, currentIndex + 200), my = ++vpkGen, startIdx = currentIndex;
+          silence = function silence(s) {
+            return new Float32Array(Math.round(VPK_RATE * s));
+          };
+          parts = [], times = [];
+          T = 0, fail = '', done = 0, local = 0; // 4語ずつ同時に取りに行く（順番はそのまま）。この端末にある声はすぐ使う
+          got = new Array(list.length);
+          next = 0;
+          worker = /*#__PURE__*/function () {
+            var _ref = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee() {
+              var i, en, ja;
+              return _regenerator().w(function (_context) {
+                while (1) switch (_context.n) {
+                  case 0:
+                    if (!(next < list.length && my === vpkGen)) {
+                      _context.n = 3;
+                      break;
+                    }
+                    i = next++;
+                    _context.n = 1;
+                    return vpkGet(list[i].w, VPK_EN);
+                  case 1:
+                    en = _context.v;
+                    _context.n = 2;
+                    return vpkGet(shortMean(list[i].m) || '…', VPK_JA);
+                  case 2:
+                    ja = _context.v;
+                    if (en.e) fail = en.e;
+                    if (ja.e) fail = fail || ja.e;
+                    if (en.local && ja.local) local++;
+                    got[i] = {
+                      en: en.b,
+                      ja: ja.b
+                    };
+                    done++;
+                    vpkMsg('🎧 声を用意しています… ' + done + ' / ' + list.length + '（この端末にあった声 ' + local + ' 語。ない声は AI が作ります）');
+                    _context.n = 0;
+                    break;
+                  case 3:
+                    return _context.a(2);
+                }
+              }, _callee);
+            }));
+            return function worker() {
+              return _ref.apply(this, arguments);
+            };
+          }();
+          vpkMsg('🎧 声を用意しています…');
+          _context2.n = 5;
+          return Promise.all([worker(), worker(), worker(), worker()]);
+        case 5:
+          i = 0;
+        case 6:
+          if (!(i < list.length)) {
+            _context2.n = 14;
+            break;
+          }
+          if (!(my !== vpkGen)) {
+            _context2.n = 7;
+            break;
+          }
+          return _context2.a(2);
+        case 7:
+          en = got[i] && got[i].en, ja = got[i] && got[i].ja;
+          if (en) {
+            _context2.n = 8;
+            break;
+          }
+          vpkMsg('🎧 声を作れませんでした（' + fail + '）。' + (/noazkey|azkey/.test(fail) ? 'Azure の声の設定（AZURE_KEY）が必要です。' : /Nanami|voice/i.test(fail) ? 'Apps Script のコードを新しいものに貼り替えてください。' : ''));
+          return _context2.a(2);
+        case 8:
+          _context2.n = 9;
+          return vpkDecode(en);
+        case 9:
+          a1 = _context2.v;
+          if (!ja) {
+            _context2.n = 11;
+            break;
+          }
+          _context2.n = 10;
+          return vpkDecode(ja);
+        case 10:
+          _t = _context2.v;
+          _context2.n = 12;
+          break;
+        case 11:
+          _t = null;
+        case 12:
+          a2 = _t;
+          times.push(T);
+          if (a1) {
+            pcm = vpkPcm(a1);
+            parts.push(pcm);
+            T += pcm.length / VPK_RATE;
+          }
+          parts.push(silence(0.6));
+          T += 0.6;
+          if (a2) {
+            pcm2 = vpkPcm(a2);
+            parts.push(pcm2);
+            T += pcm2.length / VPK_RATE;
+          }
+          parts.push(silence(1.2));
+          T += 1.2;
+        case 13:
+          i++;
+          _context2.n = 6;
+          break;
+        case 14:
+          if (!(my !== vpkGen)) {
+            _context2.n = 15;
+            break;
+          }
+          return _context2.a(2);
+        case 15:
+          url = URL.createObjectURL(vpkWav(parts));
+          vpk = {
+            url: url,
+            times: times,
+            start: startIdx
+          };
+          au = vpkAudio;
+          au.src = url;
+          au.ontimeupdate = function () {
+            if (!vpk) return;
+            var t = au.currentTime;
+            var k = 0;
+            for (var _i2 = 0; _i2 < times.length; _i2++) {
+              if (times[_i2] <= t + 0.05) k = _i2;else break;
+            }
+            var idx = vpk.start + k;
+            if (idx !== currentIndex && !document.hidden) {
+              currentIndex = idx;
+              isPaused = true;
+              renderCard();
+              revealMeaningSilent();
+            } else currentIndex = idx;
+          };
+          au.onended = function () {
+            vpkMsg('🎧 最後まで聞きました。');
+            vpkStop();
+          };
+          if ('mediaSession' in navigator) {
+            try {
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: '単語の聞き流し（' + list.length + ' 語）',
+                artist: document.title || '単語帳'
+              });
+              navigator.mediaSession.setActionHandler('play', function () {
+                return au.play();
+              });
+              navigator.mediaSession.setActionHandler('pause', function () {
+                return au.pause();
+              });
+              jump = function jump(d) {
+                var t = au.currentTime;
+                var k = 0;
+                for (var _i3 = 0; _i3 < times.length; _i3++) if (times[_i3] <= t + 0.05) k = _i3;
+                k = Math.max(0, Math.min(times.length - 1, k + d));
+                au.currentTime = times[k];
+              };
+              navigator.mediaSession.setActionHandler('nexttrack', function () {
+                return jump(1);
+              });
+              navigator.mediaSession.setActionHandler('previoustrack', function () {
+                return jump(-1);
+              });
+            } catch (e) {}
+          }
+          pr = au.play();
+          if (pr && pr.catch) pr.catch(function () {
+            return vpkMsg('🎧 準備できました。もう一度ボタンを押してください。');
+          });
+          b = document.getElementById('btn-vpk');
+          if (b) b.textContent = '■ ポケットで聞くのをやめる';
+          vpkMsg('🎧 ' + list.length + ' 語を流しています。画面を消して、ポケットに入れても大丈夫です。');
+        case 16:
+          return _context2.a(2);
+      }
+    }, _callee2);
+  }));
+  return _vpkStart.apply(this, arguments);
+}
+function revealMeaningSilent() {
+  var el = document.getElementById('txt-meaning'),
+    btn = document.getElementById('btn-show-meaning');
+  if (el) el.classList.remove('hidden');
+  if (btn) btn.classList.add('hidden');
+}
+function toFirstCard() {
+  if (!studyQueue || !studyQueue.length) return;
   stopAllAudio();
+  currentIndex = 0;
+  renderCard();
+}
+// 設定の画面の選択（範囲・本・わからないのみ・理解度）を、この端末に覚えておく
+var SETUP_IDS = ['inpStart', 'inpEnd', 'selQuickRange', 'chkReview', 'selLevel', 'selSrc'];
+function saveSetup() {
+  var v = {};
+  SETUP_IDS.forEach(function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    v[id] = el.type === 'checkbox' ? el.checked : el.value;
+  });
+  try {
+    localStorage.setItem(location.pathname + '|setup', JSON.stringify(v));
+  } catch (e) {}
+}
+function restoreSetup() {
+  var v = null;
+  try {
+    v = JSON.parse(localStorage.getItem(location.pathname + '|setup') || 'null');
+  } catch (e) {}
+  if (!v) return;
+  SETUP_IDS.forEach(function (id) {
+    var el = document.getElementById(id);
+    if (!el || !(id in v)) return;
+    if (el.type === 'checkbox') el.checked = !!v[id];else if (el.tagName === 'SELECT') {
+      if (Array.prototype.slice.call(el.options).some(function (o) {
+        return o.value === String(v[id]);
+      })) el.value = v[id];
+    } else el.value = v[id];
+  });
+}
+document.addEventListener('change', function (e) {
+  if (e.target && SETUP_IDS.indexOf(e.target.id) >= 0) saveSetup();
+}, true);
+setTimeout(restoreSetup, 0);
+function goHome() {
+  if (typeof vpkStop === 'function' && vpk) vpkStop();
+  stopAllAudio();
+  var sf = document.getElementById('sel-float');
+  if (sf) sf.style.display = 'none';
   isPaused = true;
   showScreen('screen-setup');
+  restoreSetup();
   renderResume();
   syncFlush();
   syncPull();
+}
+
+// 「ポケットで聞く」で作った AI の声がこの端末にあれば、フラッシュカードでもそれを使う（なければ端末の声）
+// すぐ鳴るように：前後のカードの声を先に読み込んで（デコード済み）メモリに置き、頭と最後の無音も削っておく
+var aiAudio = null,
+  aiSrc = null,
+  aiFresh = false;
+var aiBufs = new Map(); // voice|text → AudioBuffer（ない単語は null）
+function aiCtx() {
+  if (!vpkCtx) vpkCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return vpkCtx;
+}
+// 音の出口を作り直す（聞き流しのあとや、iPhone で止められた状態のとき）。読み込み済みの声はそのまま使える
+function aiRenew() {
+  try {
+    if (vpkCtx && vpkCtx.close) vpkCtx.close();
+  } catch (e) {}
+  vpkCtx = null;
+  aiFresh = false;
+  return aiCtx();
+}
+function aiTrim(ab) {
+  try {
+    var d = ab.getChannelData(0),
+      th = 0.01,
+      pad = Math.floor(ab.sampleRate * 0.015);
+    var a = 0,
+      b = d.length - 1;
+    while (a < d.length && Math.abs(d[a]) < th) a++;
+    while (b > a && Math.abs(d[b]) < th) b--;
+    a = Math.max(0, a - pad);
+    b = Math.min(d.length, b + pad * 4);
+    if (b - a < 100 || a === 0 && b >= d.length) return ab;
+    var out = aiCtx().createBuffer(ab.numberOfChannels, b - a, ab.sampleRate);
+    for (var c = 0; c < ab.numberOfChannels; c++) out.copyToChannel(ab.getChannelData(c).subarray(a, b), c);
+    return out;
+  } catch (e) {
+    return ab;
+  }
+}
+// 英語と日本語で声の大きさがそろうように、音量（RMS）を同じくらいに合わせる
+function aiGain(ab) {
+  try {
+    var d = ab.getChannelData(0);
+    var sq = 0,
+      pk = 0;
+    for (var i = 0; i < d.length; i++) {
+      var x = Math.abs(d[i]);
+      sq += x * x;
+      if (x > pk) pk = x;
+    }
+    var rms = Math.sqrt(sq / d.length);
+    if (!rms || !pk) return 1;
+    return Math.max(0.5, Math.min(3, 0.12 / rms, 0.98 / pk));
+  } catch (e) {
+    return 1;
+  }
+}
+function aiPrep(text, voice) {
+  var key = voice + '|' + text;
+  if (aiBufs.has(key)) {
+    var v = aiBufs.get(key);
+    return v && v.then ? v : Promise.resolve(v);
+  }
+  var pr = vpkCacheGet(text, voice).then(function (buf) {
+    return buf ? vpkDecode(buf) : null;
+  }).then(function (ab) {
+    var v = ab ? aiTrim(ab) : null;
+    if (v) v._g = aiGain(v);
+    aiBufs.set(key, v);
+    return v;
+  });
+  aiBufs.set(key, pr);
+  if (aiBufs.size > 80) aiBufs.delete(aiBufs.keys().next().value);
+  return pr;
+}
+function aiPrefetch() {
+  if (!studyQueue || !studyQueue.length) return;
+  [0, 1, 2, 3, -1].forEach(function (o) {
+    var it = studyQueue[currentIndex + o];
+    if (it) {
+      aiPrep(it.w, VPK_EN);
+      aiPrep(shortMean(it.m), VPK_JA);
+    }
+  });
+}
+// タップした瞬間に音の出口を開けておく（iPhone で、あとから AI の声をすぐ鳴らせるように）
+function aiUnlock() {
+  try {
+    if (navigator.audioSession) navigator.audioSession.type = 'playback';
+  } catch (e) {}
+  try {
+    var c = aiCtx();
+    if (aiFresh || c.state === 'interrupted' || c.state === 'closed') c = aiRenew();
+    if (c.state !== 'running') c.resume();
+    var b = c.createBuffer(1, 1, 22050),
+      s = c.createBufferSource();
+    s.buffer = b;
+    s.connect(c.destination);
+    s.start(0);
+  } catch (e) {}
+}
+// 先に（capture で）開けておく：スワイプやタップで声を鳴らす処理より前に動くように
+document.addEventListener('touchend', function () {
+  return aiUnlock();
+}, {
+  passive: true,
+  capture: true
+});
+document.addEventListener('mousedown', function () {
+  return aiUnlock();
+}, {
+  passive: true,
+  capture: true
+});
+// ほかのアプリ（Claude など）に移って戻ってくると、iPhone では音の出口が止められたままになる → 次のタップで作り直す
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden) aiFresh = true;
+});
+window.addEventListener('pageshow', function () {
+  aiFresh = true;
+});
+function aiStop() {
+  if (aiSrc) {
+    try {
+      aiSrc.onended = null;
+      aiSrc.stop();
+    } catch (e) {}
+    aiSrc = null;
+  }
+  if (aiAudio) {
+    try {
+      aiAudio.pause();
+    } catch (e) {}
+  }
+}
+function sayAI(text, lang, cb) {
+  var seq = ++speakSeq,
+    voice = lang === 'ja' ? VPK_JA : VPK_EN,
+    slang = lang === 'ja' ? 'ja-JP' : 'en-US';
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  aiStop();
+  // Web Audio が鳴らせないときは、ふつうの audio で鳴らす
+  var viaEl = function viaEl() {
+    return vpkCacheGet(text, voice).then(function (buf) {
+      if (seq !== speakSeq) return;
+      if (!buf) {
+        speak(text, slang, cb);
+        return;
+      }
+      if (!aiAudio) {
+        aiAudio = new Audio();
+        aiAudio.setAttribute('playsinline', '');
+      }
+      var url = URL.createObjectURL(new Blob([buf], {
+        type: 'audio/mpeg'
+      }));
+      aiAudio.onended = function () {
+        URL.revokeObjectURL(url);
+        if (seq === speakSeq && cb) cb();
+      };
+      aiAudio.onerror = function () {
+        URL.revokeObjectURL(url);
+        if (seq === speakSeq) speak(text, slang, cb);
+      };
+      aiAudio.src = url;
+      var pr = aiAudio.play();
+      if (pr && pr.catch) pr.catch(function () {
+        if (seq === speakSeq) speak(text, slang, cb);
+      });
+    });
+  };
+  var play = function play(ab) {
+    if (seq !== speakSeq) return;
+    if (!ab) {
+      speak(text, slang, cb);
+      return;
+    } // AI の声がまだないときは、端末の声
+    var c = aiCtx();
+    if (c.state !== 'running') {
+      if (c.state === 'interrupted' || c.state === 'closed') c = aiRenew();
+      var ok = false;
+      try {
+        var r = c.resume();
+        if (r && r.then) r.then(function () {
+          ok = true;
+        }, function () {});
+      } catch (e) {}
+      setTimeout(function () {
+        if (seq !== speakSeq) return;
+        if (ok || c.state === 'running') start(c, ab);else viaEl();
+      }, 250);
+      return;
+    }
+    start(c, ab);
+  };
+  var start = function start(c, ab) {
+    try {
+      var s = c.createBufferSource();
+      s.buffer = ab;
+      var g = c.createGain();
+      g.gain.value = ab._g || 1;
+      s.connect(g);
+      g.connect(c.destination);
+      s.onended = function () {
+        if (aiSrc === s) aiSrc = null;
+        if (seq === speakSeq && cb) cb();
+      };
+      aiSrc = s;
+      s.start(0);
+    } catch (e) {
+      speak(text, slang, cb);
+    }
+  };
+  var v = aiBufs.get(voice + '|' + text);
+  if (v !== undefined && !(v && v.then)) play(v); // 読み込み済み：待たずにすぐ鳴らす
+  else aiPrep(text, voice).then(play);
 }
 function stopAllAudio() {
   if (listenTimer) {
@@ -2079,6 +2907,7 @@ function stopAllAudio() {
     listenTimer = null;
   }
   speakSeq++; // 再生中の発話のコールバックを無効化
+  aiStop();
   if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 }
 function getStatus(n) {
@@ -2095,6 +2924,8 @@ function saveStatus(n, status) {
 }
 function startApp(mode, startAtN) {
   stopAllAudio();
+  saveSetup();
+  aiUnlock();
   var startNum = Number(document.getElementById('inpStart').value.trim()) || 1;
   var endNum = Number(document.getElementById('inpEnd').value.trim()) || 9999;
   var onlyReview = document.getElementById('chkReview').checked;
@@ -2134,10 +2965,18 @@ function renderCard() {
   if (listenTimer) clearTimeout(listenTimer);
   if (currentIndex < 0) currentIndex = 0;
   if (currentIndex >= studyQueue.length) {
-    alert("最後まで到達しました。");
+    if (!isListeningMode && studyQueue.length > 1 && confirm('最後まで来ました（' + studyQueue.length + ' 語）。最初の単語に戻りますか？\n（「キャンセル」で設定に戻ります）')) {
+      currentIndex = 0;
+      renderCard();
+      return;
+    }
+    if (isListeningMode) alert("最後まで到達しました。");
     goHome();
     return;
   }
+  // 最後の単語のときは「最初の単語に戻る」を出す（ここでの最初＝いま勉強している単語の並びの最初）
+  var tf = document.getElementById('to-first');
+  if (tf) tf.className = currentIndex === studyQueue.length - 1 && studyQueue.length > 1 ? '' : 'hidden';
   var item = studyQueue[currentIndex];
   var status = getStatus(item.n);
   posMark(item.n);
@@ -2152,8 +2991,9 @@ function renderCard() {
     btn.classList.toggle('active', idx + 1 == status.level);
   });
   loadNotesFor(item.n);
+  aiPrefetch();
   if (!isPaused) {
-    speak(item.w, 'en-US', function () {
+    sayAI(item.w, 'en', function () {
       if (isListeningMode && !isPaused) {
         listenTimer = setTimeout(function () {
           if (isPaused) return;
@@ -2175,16 +3015,14 @@ function renderCard() {
 function manualMove(offset) {
   stopAllAudio();
   var nextIdx = currentIndex + offset;
+  if (nextIdx >= studyQueue.length && offset > 0 && studyQueue.length > 1) {
+    // 最後のカードから先へ：最初に戻るか聞く
+    if (confirm('最後の単語です（' + studyQueue.length + ' 語）。最初の単語に戻りますか？')) toFirstCard();
+    return;
+  }
   if (nextIdx < 0 || nextIdx >= studyQueue.length) return;
   currentIndex = nextIdx;
   renderCard();
-}
-// 日本語訳から、読み上げ用に短い訳を1つだけ取り出す（「〈物〉を取り散らかす、散らかす」→「取り散らかす」）
-function shortMean(m) {
-  var t = String(m || '').replace(/〈[^〉]*〉|《[^》]*》|\[[^\]]*\]|【[^】]*】|\([^)]*\)|（[^）]*）|『|』|「|」/g, '');
-  var parts = t.split(/[、,，;；\/／・]|\s{2,}/).map(function (x) { return x.replace(/^[\s…\.〜～]+|[\s…\.]+$/g, '').replace(/[A-Za-z]+/g, '').trim(); }).filter(function (x) { return x.length >= 1; });
-  t = (parts[0] || String(m || '').replace(/[A-Za-z]/g, '').trim()).replace(/^を(?=..)/, '');
-  return t.length > 16 ? t.slice(0, 16) : t;
 }
 function revealMeaning(callback) {
   var el = document.getElementById('txt-meaning');
@@ -2192,8 +3030,8 @@ function revealMeaning(callback) {
   if (el.classList.contains('hidden')) {
     el.classList.remove('hidden');
     btn.classList.add('hidden');
-    var cleanText = shortMean(studyQueue[currentIndex].m);   // 訳は短く1つだけ読む
-    speak(cleanText, 'ja-JP', callback);
+    var cleanText = shortMean(studyQueue[currentIndex].m); // 訳は1つだけ短く
+    sayAI(cleanText, 'ja', callback);
   } else if (callback) {
     callback();
   }
@@ -2321,7 +3159,7 @@ function playWord(e) {
   var now = Date.now();
   if (now - lastPlayWordAt < 500) return;
   lastPlayWordAt = now;
-  speak(studyQueue[currentIndex].w, 'en-US');
+  sayAI(studyQueue[currentIndex].w, 'en');
 }
 
 /* ===== Speech (iOS対策込み) ===== */
@@ -2614,17 +3452,34 @@ function isTextSelectableTarget(target) {
 /* ===== Swipe (tap -> replay audio) ===== */
 function setupSwipeHandlers() {
   var card = document.getElementById('card-area');
+
+  // 単語や訳の文字の上からでも、すばやく横にスワイプしたら次・前のカードへ（長押しの文字選択はそのまま使える）
+  var swT = 0,
+    swText = false,
+    swOn = false;
   card.addEventListener('touchstart', function (e) {
-    if (e.target.closest('.note-area') || isTextSelectableTarget(e.target)) return;
+    swOn = false;
+    if (e.target.closest('.note-area') || e.target.closest('textarea') || e.touches.length > 1) return;
+    swOn = true;
+    swT = Date.now();
+    swText = isTextSelectableTarget(e.target);
     touchStartPos.x = e.touches[0].clientX;
     touchStartPos.y = e.touches[0].clientY;
   }, {
     passive: true
   });
   card.addEventListener('touchend', function (e) {
-    if (e.target.closest('.note-area') || isTextSelectableTarget(e.target)) return;
+    if (!swOn) return;
+    swOn = false;
     touchEndPos.x = e.changedTouches[0].clientX;
     touchEndPos.y = e.changedTouches[0].clientY;
+    if (swText) {
+      var dx = touchEndPos.x - touchStartPos.x,
+        dy = touchEndPos.y - touchStartPos.y;
+      var sel = window.getSelection ? String(window.getSelection()) : '';
+      if (Math.abs(dx) >= 40 && Math.abs(dx) > Math.abs(dy) * 1.3 && Date.now() - swT < 800 && !sel) manualMove(dx > 0 ? -1 : 1);
+      return; // 文字の上：タップや縦の動きは今までどおり（文字選択・タップで発音）
+    }
     handleSwipe();
   }, {
     passive: true
@@ -3092,6 +3947,179 @@ function clearAllNotes(e) {
 }
 
 /* ===== List screen ===== */
+// 一覧の単語をタップ → そのカードへ（一覧に出ている順にめくれる）。カードの「📚 一覧へ」→ 一覧のその単語の行へ
+// ===== 本ごとの一覧の並び順。★ は英文リーダーで付けた本・英文の ★（クラウドの memos/合言葉/favs、なければこの端末の英文リーダーのデータ） =====
+var favMap = null,
+  favAt = 0;
+function grpSortGet() {
+  try {
+    return localStorage.getItem('grp_sort') || 'new';
+  } catch (e) {
+    return 'new';
+  }
+}
+function grpSortSave() {
+  try {
+    localStorage.setItem('grp_sort', document.getElementById('selGrpSort').value);
+  } catch (e) {}
+  if (document.getElementById('selGrpSort').value === 'fav') favLoad(true);
+}
+function favFromDocs(all) {
+  var m = {};
+  Object.keys(all || {}).forEach(function (id) {
+    var d = all[id];
+    if (!d) return;
+    var f = d.book ? d.bfav || 0 : d.fav || 0;
+    var l = String(d.book ? d.bookTitle || '' : String(d.title || '').replace(/^(🌐|🎬|📚) /, '')).replace(/[\t\n\r]+/g, ' ').trim().slice(0, 60);
+    if (l && f > (m[l] || 0)) m[l] = f;
+  });
+  return m;
+}
+function favLocal() {
+  var m = {};
+  try {
+    var all = JSON.parse(localStorage.getItem('eibun_reader') || '{}') || {};
+    Object.keys(all).forEach(function (id) {
+      var d = all[id];
+      if (!d) return;
+      var f = d.book ? d.bfav || 0 : d.fav || 0;
+      var l = String(d.book ? d.bookTitle || '' : String(d.title || '').replace(/^(🌐|🎬|📚) /, '')).replace(/[\t\n\r]+/g, ' ').trim().slice(0, 60);
+      if (l && f > (m[l] || 0)) m[l] = f;
+    });
+  } catch (e) {}
+  return m;
+}
+function favLoad(force) {
+  if (!favMap) favMap = favLocal();
+  var key = cloudKey();
+  if (!key || !force && Date.now() - favAt < 60000) return;
+  favAt = Date.now();
+  var apply = function apply(m) {
+    favMap = Object.assign(favLocal(), m);
+    try {
+      renderSrcOptions();
+    } catch (e2) {}
+    if (document.getElementById('screen-list').classList.contains('active')) renderListTable();
+  };
+  // 英文リーダーの英文から ★ を集める（英文リーダーがまだ ★ のまとめを送っていないとき）
+  var fromReader = function fromReader() {
+    return cloudReq('GET', '/memos/' + key + '/reader', undefined, function (e3, all) {
+      if (e3 || !all || typeof all !== 'object') return;
+      var m = favFromDocs(all);
+      apply(m);
+      cloudReq('PUT', '/memos/' + key + '/favs', {
+        map: JSON.stringify(m),
+        at: Date.now()
+      }, function () {});
+    });
+  };
+  cloudReq('GET', '/memos/' + key + '/favs/map', undefined, function (err, js) {
+    var m = null;
+    try {
+      m = typeof js === 'string' ? JSON.parse(js) : null;
+    } catch (e) {}
+    if (!err && m && typeof m === 'object') apply(m);else if (!err) fromReader(); // まとめがまだない（null）ときだけ、英文から集める
+  });
+}
+function srcFav(s) {
+  if (!favMap) favLoad();
+  return favMap && s && favMap[s] || 0;
+}
+function srcListSorted() {
+  var list = srcList(),
+    mode = grpSortGet();
+  if (mode === 'fav') return list.slice().sort(function (a, b) {
+    return srcFav(b.s) - srcFav(a.s) || b.b - a.b;
+  });
+  if (mode === 'name') return list.slice().sort(function (a, b) {
+    return a.s.toLowerCase() < b.s.toLowerCase() ? -1 : a.s.toLowerCase() > b.s.toLowerCase() ? 1 : 0;
+  });
+  if (mode === 'count') return list.slice().sort(function (a, b) {
+    return b.c - a.c || b.b - a.b;
+  });
+  return list;
+}
+var cardFromList = false;
+var grpOpen = {}; // 本ごとの表示で、開いている本
+function listToCard(n) {
+  var q = listShown.map(function (x) {
+    return words.find(function (w) {
+      return w.n === x;
+    });
+  }).filter(function (x) {
+    return x;
+  });
+  var i = q.findIndex(function (w) {
+    return w.n === n;
+  });
+  if (i < 0) return;
+  stopAllAudio();
+  studyQueue = q;
+  currentIndex = i;
+  cardFromList = true;
+  isListeningMode = false;
+  isPaused = false;
+  document.getElementById('controls-card').className = '';
+  document.getElementById('controls-listen').className = 'hidden text-center';
+  showScreen('screen-study');
+  renderCard();
+}
+function cardToList() {
+  var item = studyQueue && studyQueue[currentIndex];
+  stopAllAudio();
+  isPaused = true;
+  showScreen('screen-list');
+  var s = document.getElementById('selListSrc');
+  if (s && !cardFromList && item) {
+    // フラッシュカードから来たとき：その単語の本・英文だけを表示
+    s.className = '';
+    s.value = item.s ? item.s : '';
+    if (s.value !== (item.s || '')) s.value = '';
+    document.getElementById('selListLevelFilter').value = 'all';
+    document.getElementById('selListResultFilter').value = 'all';
+  }
+  if (item) grpOpen[item.s || ''] = 1;
+  renderListTable();
+  if (item) setTimeout(function () {
+    var tr = document.getElementById('lr-' + item.n);
+    if (!tr) {
+      if (s) s.value = '';
+      document.getElementById('selListLevelFilter').value = 'all';
+      document.getElementById('selListResultFilter').value = 'all';
+      renderListTable();
+      tr = document.getElementById('lr-' + item.n);
+    }
+    if (tr) {
+      tr.scrollIntoView({
+        block: 'center'
+      });
+      tr.style.transition = 'background 1.5s';
+      tr.style.background = '#fff3cd';
+      setTimeout(function () {
+        tr.style.background = '';
+      }, 1500);
+    }
+  }, 50);
+  cardFromList = false;
+}
+function showSrcList() {
+  showScreen('screen-list');
+  favLoad(true);
+  var s = document.getElementById('selListSrc');
+  if (s) {
+    s.className = '';
+    if (!Array.prototype.slice.call(s.options).some(function (o) {
+      return o.value === '__group__';
+    })) {
+      var og = document.createElement('option');
+      og.value = '__group__';
+      og.textContent = '📚 本・英文ごとにまとめて表示';
+      s.insertBefore(og, s.options[1] || null);
+    }
+    s.value = '__group__';
+  }
+  renderListTable();
+}
 function showList() {
   showScreen('screen-list');
   renderListTable();
@@ -3102,8 +4130,35 @@ function renderListTable() {
   var filterResult = document.getElementById('selListResultFilter').value;
   var filterSrc = document.getElementById('selListSrc') ? document.getElementById('selListSrc').value : '';
   tbody.innerHTML = '';
+  listShown = [];
   var fragment = document.createDocumentFragment();
-  words.forEach(function (item) {
+  // 本・英文ごとにまとめる：新しく保存した本から順に、見出しを付けて並べる
+  var grouped = filterSrc === '__group__';
+  var order = words;
+  var gs = document.getElementById('selGrpSort');
+  if (gs) {
+    gs.className = grouped ? '' : 'hidden';
+    gs.value = grpSortGet();
+  }
+  if (grouped) {
+    var rank = {};
+    srcListSorted().forEach(function (x, i) {
+      rank[x.s] = i;
+    });
+    order = words.slice().sort(function (a, b) {
+      var ra = a.s ? rank[a.s] !== undefined ? rank[a.s] : 9999 : 10000,
+        rb = b.s ? rank[b.s] !== undefined ? rank[b.s] : 9999 : 10000;
+      return ra - rb || a.n - b.n;
+    });
+  }
+  var lastGrp = null,
+    grpShut = false;
+  var grpCount = {};
+  if (grouped) words.forEach(function (w) {
+    var g = w.s || '';
+    grpCount[g] = (grpCount[g] || 0) + 1;
+  });
+  order.forEach(function (item) {
     var st = getStatus(item.n);
     if (!srcMatch(item, filterSrc)) return;
     if (filterLv !== 'all' && String(st.level) !== filterLv) return;
@@ -3111,13 +4166,633 @@ function renderListTable() {
       if (filterResult === 'unknown' && st.result !== 'unknown') return;
       if (filterResult === 'new' && st.result !== 'new') return;
     }
+    if (grouped && (item.s || '') !== lastGrp) {
+      lastGrp = item.s || '';
+      var g = lastGrp,
+        hr = document.createElement('tr'),
+        open = !!grpOpen[g];
+      grpShut = !open;
+      hr.style.cursor = 'pointer';
+      hr.onclick = function () {
+        if (grpOpen[g]) delete grpOpen[g];else grpOpen[g] = 1;
+        renderListTable();
+      };
+      var fv = srcFav(g);
+      hr.innerHTML = "<td colspan=\"4\" style=\"background:#f3efe9; font-weight:bold; padding:8px 6px;\">" + (open ? '▼' : '▶') + " " + (fv ? '<span style="color:#e0a000; font-size:1.05em; letter-spacing:1px">' + '★'.repeat(fv) + '<span style="color:#ccc">' + '★'.repeat(3 - Math.min(3, fv)) + '</span></span> ' : '<span style="color:#ccc; font-size:1.05em; letter-spacing:1px">☆☆☆</span> ') + "\uD83D\uDCDA " + (g || '（どこから保存したか分からない単語）').replace(/[<>&]/g, '') + "\u3000<span style=\"font-weight:normal; color:#777; font-size:0.85em\">" + grpCount[g] + "\u8A9E</span> <button class=\"tool-btn\" style=\"padding:2px 8px; font-size:0.75rem; margin-left:6px\">\u2611 \u3053\u306E\u672C\u306E\u5358\u8A9E\u3092\u9078\u3076</button></td>";
+      hr.querySelector('button').onclick = function (e) {
+        e.stopPropagation();
+        words.forEach(function (w) {
+          if ((w.s || '') === g) listSel[w.n] = 1;
+        });
+        renderListTable();
+        selShow();
+      };
+      fragment.appendChild(hr);
+    }
+    if (grouped && grpShut) return; // たたんだ本の単語は出さない（見出しを押すと開く）
     var tr = document.createElement('tr');
-    tr.innerHTML = "<td>" + item.n + "</td>\n            <td><div style=\"font-weight:bold; color:var(--primary)\">" + item.w + "</div><div style=\"font-size:0.8em; color:#666\">" + item.m + "</div>" + (item.s ? "<div style=\"font-size:0.75em; color:#999\">\uD83D\uDCDA " + item.s.replace(/[<>&]/g, '') + "</div>" : '') + "</td>\n            <td style=\"text-align:center\"><select onchange=\"updateLv(" + item.n + ", this.value)\">\n                " + [0, 1, 2, 3, 4, 5].map(function (v) {
+    tr.id = 'lr-' + item.n;
+    listShown.push(item.n);
+    tr.innerHTML = "<td><input type=\"checkbox\" " + (listSel[item.n] ? 'checked' : '') + " onclick=\"selOne(" + item.n + ", this.checked, event)\" style=\"width:20px; height:20px;\"></td><td>" + item.n + "</td>\n            <td><div style=\"font-weight:bold; color:var(--primary)\"><span class=\"lw\" onclick=\"listToCard(" + item.n + ")\" style=\"cursor:pointer\" title=\"\u3053\u306E\u30AB\u30FC\u30C9\u3092\u958B\u304F\">" + item.w + "</span> <button class=\"tool-btn\" style=\"padding:1px 7px; font-size:0.75rem; font-weight:normal\" onclick=\"editMeaning(" + item.n + ", event)\" title=\"\u65E5\u672C\u8A9E\u8A33\u3092\u66F8\u304D\u63DB\u3048\u308B\">\u270E \u8A33</button></div><div class=\"lm\" style=\"font-size:0.8em; color:#666\">" + String(item.m).replace(/[<>&]/g, '') + "</div>" + (item.s && !grouped ? "<div style=\"font-size:0.75em; color:#999\">\uD83D\uDCDA " + item.s.replace(/[<>&]/g, '') + "</div>" : '') + "</td>\n            <td style=\"text-align:center\"><select onchange=\"updateLv(" + item.n + ", this.value)\">\n                " + [0, 1, 2, 3, 4, 5].map(function (v) {
       return "<option value=\"" + v + "\" " + (st.level == v ? 'selected' : '') + ">" + v + "</option>";
     }).join('') + "\n            </select></td>";
     fragment.appendChild(tr);
   });
   tbody.appendChild(fragment);
+}
+
+// ===== 元に戻す（Ctrl＋Z・Mac は ⌘＋Z）：訳の修正・単語の追加 =====
+var tsvUndo = [];
+function tsvUndoPush(label) {
+  tsvUndo.push({
+    tsv: masterTsv,
+    label: label
+  });
+  if (tsvUndo.length > 20) tsvUndo.shift();
+}
+function tsvUndoDo() {
+  var u = tsvUndo.pop();
+  if (!u) {
+    alert('もう戻せる操作はありません。');
+    return;
+  }
+  if (!confirm('「' + u.label + '」を元に戻しますか？')) {
+    tsvUndo.push(u);
+    return;
+  }
+  masterTsv = u.tsv;
+  lsSet('master_tsv', masterTsv);
+  document.getElementById('data-editor').value = masterTsv.trim();
+  parseData();
+  refreshMainStats();
+  if (document.getElementById('screen-list').classList.contains('active')) renderListTable();
+  if (cloudKey()) cloudPush(function (err) {
+    if (err) alert('端末では戻しましたが、クラウドへの保存に失敗しました（' + cloudErrText(err) + '）。');
+  });
+}
+document.addEventListener('keydown', function (e) {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+  var t = e.target,
+    n = t && t.tagName;
+  if (n === 'INPUT' || n === 'TEXTAREA' || n === 'SELECT' || t && t.isContentEditable) return; // 入力中は、ふつうの「元に戻す」
+  if (String(e.key || '').toLowerCase() === 'z') {
+    e.preventDefault();
+    tsvUndoDo();
+  }
+});
+
+// 日本語訳を書き換える（n：番号。null なら今のカード）。
+// クラウドの最新の単語データに対して直す（英文リーダーで足した単語を消さないため）
+function editMeaning(n, e) {
+  if (e) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+  if (n === null || n === undefined) {
+    var cur = studyQueue && studyQueue[currentIndex];
+    if (!cur) return;
+    n = cur.n;
+  }
+  var item = words.find(function (x) {
+    return x.n === Number(n);
+  });
+  if (!item) return;
+  var v = prompt('「' + item.w + '」の日本語訳', item.m);
+  if (v === null) return;
+  var nm = v.replace(/[\t\r\n]+/g, ' ').trim();
+  if (!nm || nm === item.m) return;
+  var patch = function patch(tsv) {
+    var lines = String(tsv || '').replace(/\s+$/, '').split('\n');
+    var hit = false;
+    for (var i = 0; i < lines.length; i++) {
+      var p = lines[i].split('\t');
+      if (p.length >= 3 && parseInt(p[2], 10) === Number(n)) {
+        p[1] = nm;
+        lines[i] = p.join('\t');
+        hit = true;
+      }
+    }
+    return hit ? lines.join('\n') : null;
+  };
+  var finish = function finish(tsv) {
+    if (!tsv) {
+      alert('その単語が見つかりませんでした。');
+      return;
+    }
+    tsvUndoPush('訳の修正');
+    masterTsv = tsv;
+    lsSet('master_tsv', masterTsv);
+    document.getElementById('data-editor').value = masterTsv.trim();
+    parseData();
+    if (studyQueue) studyQueue.forEach(function (q) {
+      if (q.n === Number(n)) q.m = nm;
+    });
+    var cur = studyQueue && studyQueue[currentIndex];
+    if (cur && cur.n === Number(n)) document.getElementById('txt-meaning').innerText = nm;
+    if (document.getElementById('screen-list').classList.contains('active')) renderListTable();
+    if (cloudKey()) cloudPush(function (err) {
+      if (err) alert('端末には保存しましたが、クラウドへの保存に失敗しました（' + cloudErrText(err) + '）。');
+    });
+  };
+  var key = cloudKey();
+  if (!key) {
+    finish(patch(masterTsv));
+    return;
+  }
+  cloudReq('GET', '/memos/' + key + '/' + CLOUD_NODE + '/words', undefined, function (err, w) {
+    finish(patch(!err && typeof w === 'string' && w.trim() ? w : masterTsv));
+  });
+}
+(function () {
+  var b = document.getElementById('btn-edit-meaning'),
+    stop = function stop(e) {
+      e.stopPropagation();
+    };
+  if (b) {
+    b.addEventListener('pointerdown', stop, {
+      passive: true
+    });
+    b.addEventListener('touchstart', stop, {
+      passive: true
+    });
+  }
+})();
+
+// ===== 単語を追加（英単語だけ入れれば、英文リーダーと同じ英和辞書で訳を入れる） =====
+var DICT_BASE = '/eibun-reader/vendor/ejdict/';
+var dictCache = {};
+var phraseList = null;
+function dictLetter(ch, cb) {
+  ch = /^[a-z]$/.test(ch) ? ch : '';
+  if (!ch) {
+    cb({});
+    return;
+  }
+  if (dictCache[ch]) {
+    cb(dictCache[ch]);
+    return;
+  }
+  fetch(DICT_BASE + ch + '.txt').then(function (r) {
+    return r.ok ? r.text() : '';
+  }).then(function (t) {
+    var map = {};
+    String(t || '').split('\n').forEach(function (line) {
+      var i = line.indexOf('\t');
+      if (i > 0) {
+        var _k2 = line.slice(0, i).toLowerCase();
+        if (!map[_k2]) map[_k2] = line.slice(i + 1);
+      }
+    });
+    dictCache[ch] = map;
+    cb(map);
+  }).catch(function () {
+    return cb({});
+  });
+}
+function dictPhrases(cb) {
+  if (phraseList) {
+    cb(phraseList);
+    return;
+  }
+  fetch(DICT_BASE + 'phrases.json').then(function (r) {
+    return r.ok ? r.json() : [];
+  }).then(function (a) {
+    phraseList = {};
+    (a || []).forEach(function (p) {
+      var k = String(p[0]).toLowerCase();
+      if (!phraseList[k]) phraseList[k] = p[2] ? p[1] : cleanMeanK(p[1]);
+    });
+    cb(phraseList);
+  }).catch(function () {
+    phraseList = {};
+    cb(phraseList);
+  });
+}
+function cleanMeanK(m) {
+  m = String(m || '').replace(/『|』/g, '').replace(/\s*\/\s*/g, ' / ');
+  var out = [];
+  m.split(' / ').forEach(function (p) {
+    p = p.replace(/《[^》]*》/g, '').replace(/^[\s・]+|\s+$/g, '');
+    if (p && p.length > 1 && out.length < 3) out.push(p);
+  });
+  var s = out.join('、') || m;
+  return s.length > 70 ? s.slice(0, 70) + '…' : s;
+}
+function lemmasK(w) {
+  var out = [w],
+    add = function add(x) {
+      if (x && x.length > 1 && out.indexOf(x) < 0) out.push(x);
+    };
+  if (/ies$/.test(w)) add(w.slice(0, -3) + 'y');
+  if (/(ches|shes|sses|xes|zes|oes)$/.test(w)) add(w.slice(0, -2));
+  if (/s$/.test(w) && !/ss$/.test(w)) add(w.slice(0, -1));
+  if (/ied$/.test(w)) add(w.slice(0, -3) + 'y');
+  if (/ed$/.test(w)) {
+    add(w.slice(0, -2));
+    add(w.slice(0, -1));
+    if (/([b-df-hj-np-tv-z])\1ed$/.test(w)) add(w.slice(0, -3));
+  }
+  if (/ing$/.test(w)) {
+    add(w.slice(0, -3));
+    add(w.slice(0, -3) + 'e');
+    if (/([b-df-hj-np-tv-z])\1ing$/.test(w)) add(w.slice(0, -4));
+  }
+  if (/ly$/.test(w)) add(w.slice(0, -2));
+  return out;
+}
+function dictLookup(word, cb) {
+  var w = word.toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, ' ').trim();
+  if (/ /.test(w)) {
+    // 熟語：熟語の辞書 → 英和辞書（"run out" のような見出しもある）
+    dictPhrases(function (pl) {
+      if (pl[w]) {
+        cb(pl[w]);
+        return;
+      }
+      var alt = w.replace(/\b(someone|somebody|something|sb|sth)\b/g, '～');
+      if (pl[alt]) {
+        cb(pl[alt]);
+        return;
+      }
+      dictLetter(w.charAt(0), function (map) {
+        return cb(map[w] ? cleanMeanK(map[w]) : '');
+      });
+    });
+    return;
+  }
+  dictLetter(w.charAt(0), function (map) {
+    var c = lemmasK(w);
+    for (var i = 0; i < c.length; i++) if (map[c[i]]) {
+      cb(cleanMeanK(map[c[i]]) + (i ? '（' + c[i] + '）' : ''));
+      return;
+    }
+    cb('');
+  });
+}
+// 辞書にない語は、英文リーダーと同じ Apps Script で訳す（設定してあれば）
+var GAS_LS = 'eibun_gas';
+function gasTranslate(text, cb, again) {
+  var url = '';
+  try {
+    url = localStorage.getItem(GAS_LS) || '';
+  } catch (e) {}
+  if (!url && !again) {
+    gasEnsure().then(function (u) {
+      if (u) gasTranslate(text, cb, true);else cb('');
+    });
+    return;
+  }
+  var key = cloudKey();
+  if (!url || !/^https:\/\//.test(url) || !window.crypto || !crypto.subtle || !window.TextEncoder) {
+    cb('');
+    return;
+  }
+  var go = function go(tk) {
+    var u = url + (url.indexOf('?') >= 0 ? '&' : '?') + (tk ? 'tk=' + tk + '&' : '') + 'q=' + encodeURIComponent(text);
+    fetch(u).then(function (r) {
+      return r.json();
+    }).then(function (d) {
+      return cb(d && d.ok && d.t ? String(d.t) : '');
+    }).catch(function () {
+      return cb('');
+    });
+  };
+  if (!key) {
+    go('');
+    return;
+  }
+  crypto.subtle.digest('SHA-256', new TextEncoder().encode('tegaki-gas|' + key)).then(function (h) {
+    go(Array.prototype.map.call(new Uint8Array(h), function (b) {
+      return ('0' + b.toString(16)).slice(-2);
+    }).join('').slice(0, 32));
+  }).catch(function () {
+    return go('');
+  });
+}
+var addRows = [];
+function openAddWords() {
+  document.getElementById('add-dlg').style.display = 'block';
+  document.getElementById('add-msg').textContent = '';
+  setTimeout(function () {
+    try {
+      document.getElementById('add-in').focus();
+    } catch (e) {}
+  }, 50);
+}
+function closeAddWords() {
+  document.getElementById('add-dlg').style.display = 'none';
+}
+function addLookup() {
+  var raw = document.getElementById('add-in').value;
+  var have = {};
+  words.forEach(function (x) {
+    have[String(x.w).toLowerCase()] = 1;
+  });
+  var seen = {},
+    list = [];
+  raw.split(/[\n,，、;]+/).forEach(function (t) {
+    t = t.replace(/^[\s"'“”‘’・\-\d.)]+|[\s"'“”‘’.!?]+$/g, '').replace(/\s+/g, ' ');
+    if (!t || !/[A-Za-z]/.test(t) || t.length > 60) return;
+    var k = t.toLowerCase();
+    if (seen[k]) return;
+    seen[k] = 1;
+    list.push(t);
+  });
+  var box = document.getElementById('add-list'),
+    msg = document.getElementById('add-msg');
+  box.innerHTML = '';
+  addRows = [];
+  document.getElementById('add-go-row').style.display = 'none';
+  if (!list.length) {
+    msg.textContent = '英単語が見つかりませんでした。';
+    return;
+  }
+  msg.textContent = '辞書で調べています…';
+  var left = list.length,
+    dup = 0;
+  list.forEach(function (w, i) {
+    var isDup = !!have[w.toLowerCase()];
+    if (isDup) dup++;
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex; gap:6px; align-items:center; margin:4px 0; padding:4px 0; border-bottom:1px solid #eee;';
+    var ck = document.createElement('input');
+    ck.type = 'checkbox';
+    ck.checked = !isDup;
+    var lb = document.createElement('div');
+    lb.style.cssText = 'min-width:30%; font-weight:bold; color:var(--primary); word-break:break-word;';
+    lb.textContent = w + (isDup ? '（登録済み）' : '');
+    var inp = document.createElement('input');
+    inp.type = 'text';
+    inp.placeholder = '日本語訳（入力してください）';
+    inp.style.cssText = 'flex:1; min-width:0; font-size:15px; padding:6px; border:1px solid #ccc; border-radius:6px;';
+    row.appendChild(ck);
+    row.appendChild(lb);
+    row.appendChild(inp);
+    box.appendChild(row);
+    addRows[i] = {
+      w: w,
+      ck: ck,
+      inp: inp
+    };
+    dictLookup(w, function (m0) {
+      var fill = function fill(m, viaTr) {
+        inp.value = m || '';
+        if (m && viaTr) inp.title = '辞書になかったので、翻訳で入れました';
+        if (!m) inp.style.borderColor = '#e0a000';
+        if (--left === 0) {
+          var miss = addRows.filter(function (r) {
+            return !r.inp.value;
+          }).length;
+          msg.textContent = list.length + ' 語を調べました。' + (miss ? '辞書になかった ' + miss + ' 語は、訳を入れてください（黄色の枠）。' : '') + (dup ? '登録済みの ' + dup + ' 語は、チェックを外してあります。' : '') + '訳は書き換えられます。';
+          document.getElementById('add-go-row').style.display = 'block';
+        }
+      };
+      if (m0) fill(m0, false);else gasTranslate(w, function (t) {
+        return fill(t, true);
+      });
+    });
+  });
+}
+function addCommit() {
+  var pick = addRows.filter(function (r) {
+    return r && r.ck.checked;
+  });
+  if (!pick.length) {
+    alert('追加する単語にチェックを入れてください。');
+    return;
+  }
+  var noMean = pick.filter(function (r) {
+    return !r.inp.value.trim();
+  });
+  if (noMean.length && !confirm('訳が空の単語が ' + noMean.length + ' 語あります。訳なしで追加しますか？（あとで ✎ で直せます）')) return;
+  var clean = function clean(t) {
+    return String(t || '').replace(/[\t\r\n]+/g, ' ').trim();
+  };
+  var apply = function apply(tsv) {
+    var lines = String(tsv || '').replace(/\s+$/, '').split('\n').filter(function (l) {
+      return l.trim();
+    });
+    var maxN = 0;
+    var have = {};
+    lines.forEach(function (l) {
+      var p = l.split('\t');
+      var n = parseInt(p[2], 10);
+      if (n > maxN) maxN = n;
+      if (p[0]) have[p[0].trim().toLowerCase()] = 1;
+    });
+    var added = 0;
+    pick.forEach(function (r) {
+      if (have[r.w.toLowerCase()]) return;
+      have[r.w.toLowerCase()] = 1;
+      maxN++;
+      added++;
+      lines.push(clean(r.w) + '\t' + (clean(r.inp.value) || '（訳なし）') + '\t' + maxN + '\t手入力');
+    });
+    return {
+      tsv: lines.join('\n'),
+      added: added
+    };
+  };
+  var finish = function finish(res) {
+    tsvUndoPush('単語の追加');
+    masterTsv = res.tsv;
+    lsSet('master_tsv', masterTsv);
+    document.getElementById('data-editor').value = masterTsv.trim();
+    parseData();
+    refreshMainStats();
+    var done = function done(err) {
+      document.getElementById('add-msg').textContent = res.added + ' 語を追加しました。' + (err ? '（クラウドへの保存に失敗：' + cloudErrText(err) + '）' : '');
+      document.getElementById('add-list').innerHTML = '';
+      document.getElementById('add-go-row').style.display = 'none';
+      addRows = [];
+      document.getElementById('add-in').value = '';
+    };
+    if (cloudKey()) cloudPush(done);else done(null);
+  };
+  var key = cloudKey();
+  if (!key) {
+    finish(apply(masterTsv));
+    return;
+  }
+  document.getElementById('add-msg').textContent = '追加しています…';
+  cloudReq('GET', '/memos/' + key + '/' + CLOUD_NODE + '/words', undefined, function (err, w) {
+    finish(apply(!err && typeof w === 'string' && w.trim() ? w : masterTsv));
+  });
+}
+
+// ===== 選んだ単語を CSV に書き出す・勉強用の英文を作る LLM 用のプロンプト =====
+var listSel = {},
+  listShown = [];
+function selCount() {
+  var n = 0;
+  words.forEach(function (w) {
+    if (listSel[w.n]) n++;
+  });
+  return n;
+}
+function selShow() {
+  var c = selCount(),
+    el = document.getElementById('sel-n');
+  if (el) el.textContent = c + ' 語を選択';
+  // スクロールしても見えるように、画面の下にも選んだ数を出す
+  var f = document.getElementById('sel-float');
+  if (!f) {
+    f = document.createElement('div');
+    f.id = 'sel-float';
+    f.style.cssText = 'position:fixed; left:50%; bottom:14px; transform:translateX(-50%); background:#2f3b45; color:#fff; padding:8px 16px; border-radius:20px; font-size:0.9rem; z-index:150; box-shadow:0 2px 8px rgba(0,0,0,.25); display:none; white-space:nowrap;';
+    document.body.appendChild(f);
+  }
+  f.textContent = '☑ ' + c + ' 語を選択中';
+  f.style.display = c && document.getElementById('screen-list').classList.contains('active') ? 'block' : 'none';
+  if (document.getElementById('prompt-box').style.display !== 'none') buildPrompt();
+}
+// Shift を押しながらチェック：前にチェックした単語から、ここまでをまとめて（付ける・外す）
+var selLast = null;
+function selOne(n, on, e) {
+  if (e && e.shiftKey && selLast !== null) {
+    var a = listShown.indexOf(selLast),
+      b = listShown.indexOf(n);
+    if (a >= 0 && b >= 0) {
+      for (var i = Math.min(a, b); i <= Math.max(a, b); i++) {
+        if (on) listSel[listShown[i]] = 1;else delete listSel[listShown[i]];
+      }
+      selLast = n;
+      renderListTable();
+      selShow();
+      return;
+    }
+  }
+  if (on) listSel[n] = 1;else delete listSel[n];
+  selLast = n;
+  selShow();
+}
+function selAll(on) {
+  if (on) listShown.forEach(function (n) {
+    listSel[n] = 1;
+  });else listSel = {};
+  renderListTable();
+  selShow();
+}
+function selWords() {
+  return words.filter(function (w) {
+    return listSel[w.n];
+  });
+}
+// 選んだ単語の LV をまとめて変える
+function setLvBulk(el) {
+  var lv = el.value;
+  el.value = '';
+  if (lv === '') return;
+  var list = selWords();
+  if (!list.length) {
+    alert('LV を変える単語を選んでください（本の見出しの「この本の単語を選ぶ」や「表示中を全選択」も使えます）。');
+    return;
+  }
+  if (!confirm('選んだ ' + list.length + ' 語を LV.' + lv + ' にしますか？')) return;
+  list.forEach(function (w) {
+    var st = getStatus(w.n);
+    st.level = parseInt(lv, 10);
+    saveStatus(w.n, st);
+  });
+  renderListTable();
+  if (typeof refreshMainStats === 'function') refreshMainStats();
+  var m = document.getElementById('sel-n');
+  if (m) m.textContent = list.length + ' 語を LV.' + lv + ' にしました';
+  setTimeout(selShow, 2500);
+}
+function exportCsv() {
+  var list = selWords();
+  if (!list.length) {
+    alert('書き出す単語を選んでください（「表示中を全選択」も使えます）。');
+    return;
+  }
+  var q = function q(v) {
+    return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  };
+  var rows = [['No', 'word', 'meaning', 'level', 'source'].join(',')];
+  list.forEach(function (w) {
+    var st = getStatus(w.n);
+    rows.push([w.n, q(w.w), q(w.m), st.level || 0, q(w.s || '')].join(','));
+  });
+  var blob = new Blob(['\ufeff' + rows.join('\r\n') + '\r\n'], {
+    type: 'text/csv;charset=utf-8'
+  });
+  var d = new Date(),
+    pad = function pad(x) {
+      return ('0' + x).slice(-2);
+    };
+  var name = 'MyVocab_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + list.length + 'words.csv';
+  if (!('download' in document.createElement('a'))) {
+    document.getElementById('prompt-box').style.display = 'block';
+    document.getElementById('pr-text').value = rows.join('\n');
+    document.getElementById('pr-msg').textContent = 'この iPad ではファイルに保存できないので、CSV の中身を表示しています。「コピー」でメモやメールに貼り付けてください。';
+    return;
+  }
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () {
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }, 2000);
+}
+function buildPrompt() {
+  var list = selWords(),
+    ta = document.getElementById('pr-text');
+  if (!list.length) {
+    ta.value = '（単語を選ぶと、ここにプロンプトができます）';
+    return;
+  }
+  var style = {
+    story: 'a short story',
+    dialog: 'a natural conversation between two or three people (write each line as "Name: ...")',
+    news: 'a news article',
+    email: 'a business email exchange',
+    essay: 'an opinion essay'
+  }[document.getElementById('pr-style').value];
+  var len = document.getElementById('pr-len').value,
+    lv = document.getElementById('pr-lv').value,
+    rep = document.getElementById('pr-rep').value;
+  var wl = list.map(function (w) {
+    return '- ' + w.w + '（' + String(w.m).replace(/\s+/g, ' ').slice(0, 40) + '）';
+  }).join('\n');
+  ta.value = 'Write ' + style + ' in English for an English learner (CEFR ' + lv + ' level), about ' + len + ' words long.\n' + 'Use every word or phrase in the list below naturally, at least ' + rep + ' time(s) each, in contexts that make its meaning clear. ' + 'You may change the word form (e.g. tense, plural) when needed.\n\n' + 'Output rules:\n' + '- First line: a short title only.\n' + '- Then the text in plain English. No Japanese, no translations, no bold, no markdown, no bullet points, no word lists, no explanations.\n' + '- Use normal paragraphs and complete sentences ending with a period, question mark or exclamation mark.\n\n' + 'Words and phrases to use (' + list.length + '):\n' + wl + '\n';
+}
+function openPrompt() {
+  if (!selCount()) {
+    alert('英文に使う単語を選んでください（「表示中を全選択」も使えます）。');
+    return;
+  }
+  if (selCount() > 40 && !confirm(selCount() + ' 語を選んでいます。1つの英文に入れるには多いので、15〜30 語くらいがおすすめです。このまま作りますか？')) return;
+  document.getElementById('prompt-box').style.display = 'block';
+  document.getElementById('pr-msg').textContent = '';
+  buildPrompt();
+}
+function copyPrompt() {
+  var ta = document.getElementById('pr-text'),
+    msg = document.getElementById('pr-msg');
+  var ok = function ok() {
+    msg.textContent = 'コピーしました。';
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(ok, function () {
+    ta.select();
+    try {
+      document.execCommand('copy');
+      ok();
+    } catch (e) {
+      msg.textContent = '長押しで全選択してコピーしてください。';
+    }
+  });else {
+    ta.removeAttribute('readonly');
+    ta.select();
+    try {
+      document.execCommand('copy');
+      ok();
+    } catch (e) {}
+    ta.setAttribute('readonly', '');
+  }
 }
 function updateLv(n, lv) {
   var st = getStatus(n);
@@ -3132,19 +4807,14 @@ function updateLv(n, lv) {
   var stop = function stop(e) {
     e.stopPropagation();
   };
+  // touchstart は止めない（文字の上からの横スワイプで次のカードへ進めるように。判定はスワイプの処理側で行う）
   if (w) {
     w.addEventListener('pointerdown', stop, {
-      passive: true
-    });
-    w.addEventListener('touchstart', stop, {
       passive: true
     });
   }
   if (m) {
     m.addEventListener('pointerdown', stop, {
-      passive: true
-    });
-    m.addEventListener('touchstart', stop, {
       passive: true
     });
   }
@@ -3720,5 +5390,16 @@ if (false && "serviceWorker" in navigator) {
   };
 })();
 </script>
+<div id="add-dlg" style="display:none; position:fixed; inset:0; background:rgba(20,28,32,.45); z-index:200;">
+  <div style="position:absolute; left:3%; right:3%; top:4%; max-width:560px; margin:0 auto; background:#fff; border-radius:14px; padding:14px; box-sizing:border-box; max-height:92%; overflow-y:auto; -webkit-overflow-scrolling:touch;">
+    <h3 style="margin:0 0 6px; font-size:1.05rem;">＋ 単語を追加</h3>
+    <div style="font-size:0.82rem; color:#666; line-height:1.5; margin-bottom:6px;">英単語・熟語を1行に1つ（またはカンマ区切り）で入れて「訳を調べる」を押すと、辞書で日本語訳を入れます。訳は追加する前に直せます。</div>
+    <textarea id="add-in" rows="5" placeholder="例：&#10;meticulous&#10;par for the course&#10;run out of" style="width:100%; box-sizing:border-box; font-size:16px; padding:8px; border:1px solid #ccc; border-radius:8px;"></textarea>
+    <div data-gap="6r" style="margin:8px 0; display:flex;  flex-wrap:wrap;"><button class="btn-primary" style="padding:8px 14px" onclick="addLookup()">訳を調べる</button> <button class="btn-neutral" style="padding:8px 14px" onclick="closeAddWords()">閉じる</button></div>
+    <div id="add-msg" style="font-size:0.85rem; color:#555; margin:4px 0;"></div>
+    <div id="add-list"></div>
+    <div id="add-go-row" style="display:none; margin-top:8px;"><button class="btn-primary btn-block" onclick="addCommit()">この内容で追加する</button></div>
+  </div>
+</div>
 </body>
 </html>
