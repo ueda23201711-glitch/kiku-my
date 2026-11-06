@@ -1778,12 +1778,33 @@ function goHome() {
     syncFlush(); syncPull();
 }
 
+// 「ポケットで聞く」で作った AI の声がこの端末にあれば、フラッシュカードでもそれを使う（なければ端末の声）
+let aiAudio = null;
+// タップした瞬間に無音を鳴らしておく（iPhone で、あとから AI の声を鳴らせるように）
+function aiUnlock() { try { if (!aiAudio) { aiAudio = new Audio(); aiAudio.setAttribute('playsinline', ''); } aiAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='; const pr = aiAudio.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {} }
+document.addEventListener('touchend', () => { if (!aiAudio) aiUnlock(); }, { once: true, passive: true });
+function sayAI(text, lang, cb) {
+    const seq = ++speakSeq, voice = lang === 'ja' ? VPK_JA : VPK_EN, slang = lang === 'ja' ? 'ja-JP' : 'en-US';
+    let done = false; const fin = () => { if (done || seq !== speakSeq) return; done = true; if (cb) cb(); };
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    vpkCacheGet(text, voice).then(buf => {
+        if (seq !== speakSeq) return;
+        if (!buf) { speak(text, slang, cb); return; }   // AI の声がまだないときは、端末の声
+        if (!aiAudio) { aiAudio = new Audio(); aiAudio.setAttribute('playsinline', ''); }
+        const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }));
+        aiAudio.onended = () => { URL.revokeObjectURL(url); fin(); };
+        aiAudio.onerror = () => { URL.revokeObjectURL(url); if (seq === speakSeq) speak(text, slang, cb); };
+        aiAudio.src = url;
+        const pr = aiAudio.play(); if (pr && pr.catch) pr.catch(() => { if (seq === speakSeq) speak(text, slang, cb); });
+    });
+}
 function stopAllAudio() {
     if (listenTimer) {
         clearTimeout(listenTimer);
         listenTimer = null;
     }
     speakSeq++; // 再生中の発話のコールバックを無効化
+    if (aiAudio) { try { aiAudio.pause(); aiAudio.onended = null; aiAudio.onerror = null; } catch (e) {} }
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 }
 
@@ -1801,6 +1822,7 @@ function saveStatus(n, status) {
 function startApp(mode, startAtN) {
     stopAllAudio();
     saveSetup();
+    aiUnlock();
     const startNum = Number(document.getElementById('inpStart').value.trim()) || 1;
     const endNum = Number(document.getElementById('inpEnd').value.trim()) || 9999;
     const onlyReview = document.getElementById('chkReview').checked;
@@ -1868,7 +1890,7 @@ function renderCard() {
     loadNotesFor(item.n);
 
     if (!isPaused) {
-        speak(item.w, 'en-US', () => {
+        sayAI(item.w, 'en', () => {
             if (isListeningMode && !isPaused) {
                 listenTimer = setTimeout(() => {
                     if (isPaused) return;
@@ -1906,8 +1928,8 @@ function revealMeaning(callback) {
     if (el.classList.contains('hidden')) {
         el.classList.remove('hidden');
         btn.classList.add('hidden');
-        const cleanText = isListeningMode ? shortMean(studyQueue[currentIndex].m) : studyQueue[currentIndex].m.replace(/\(.*\)/g, '').replace(/（.*）/g, '').replace(/[a-z]/gi, '');
-        speak(cleanText, 'ja-JP', callback);
+        const cleanText = shortMean(studyQueue[currentIndex].m);   // 訳は1つだけ短く
+        sayAI(cleanText, 'ja', callback);
     } else if (callback) {
         callback();
     }
@@ -1998,7 +2020,7 @@ function playWord(e){
     const now = Date.now();
     if (now - lastPlayWordAt < 500) return;
     lastPlayWordAt = now;
-    speak(studyQueue[currentIndex].w, 'en-US');
+    sayAI(studyQueue[currentIndex].w, 'en');
 }
 
 /* ===== Speech (iOS対策込み) ===== */
