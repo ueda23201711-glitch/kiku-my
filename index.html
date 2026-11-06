@@ -1680,7 +1680,13 @@ function vpkWav(parts) {
     return new Blob([buf], { type: 'audio/wav' });
 }
 function vpkMsg(t) { const el = document.getElementById('vpk-msg'); if (el) el.textContent = t; }
-function vpkStop() { if (vpkAudio) { try { vpkAudio.pause(); vpkAudio.ontimeupdate = null; vpkAudio.onended = null; } catch (e) {} } vpk = null; vpkGen++; const b = document.getElementById('btn-vpk'); if (b) b.textContent = '🎧 ポケットで聞く（画面を消しても流れる）'; }
+function vpkStop() {
+    if (vpkAudio) { try { vpkAudio.pause(); vpkAudio.ontimeupdate = null; vpkAudio.onended = null; vpkAudio.removeAttribute('src'); vpkAudio.load(); } catch (e) {} }
+    if (vpk && vpk.url) { try { URL.revokeObjectURL(vpk.url); } catch (e) {} }
+    // iPhone：聞き流しの「再生中の音」を手放す（そのままだと、あとのフラッシュカードの声が出なくなることがある）
+    if ('mediaSession' in navigator) { try { ['play', 'pause', 'nexttrack', 'previoustrack'].forEach(a => navigator.mediaSession.setActionHandler(a, null)); navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none'; } catch (e) {} }
+    aiFresh = true;
+    vpk = null; vpkGen++; const b = document.getElementById('btn-vpk'); if (b) b.textContent = '🎧 ポケットで聞く（画面を消しても流れる）'; }
 async function vpkStart() {
     if (vpk) { vpkStop(); vpkMsg('ポケットで聞くのをやめました。'); return; }
     await gasEnsure();
@@ -1780,9 +1786,11 @@ function goHome() {
 
 // 「ポケットで聞く」で作った AI の声がこの端末にあれば、フラッシュカードでもそれを使う（なければ端末の声）
 // すぐ鳴るように：前後のカードの声を先に読み込んで（デコード済み）メモリに置き、頭と最後の無音も削っておく
-let aiAudio = null, aiSrc = null;
+let aiAudio = null, aiSrc = null, aiFresh = false;
 const aiBufs = new Map();   // voice|text → AudioBuffer（ない単語は null）
 function aiCtx() { if (!vpkCtx) vpkCtx = new (window.AudioContext || window.webkitAudioContext)(); return vpkCtx; }
+// 音の出口を作り直す（聞き流しのあとや、iPhone で止められた状態のとき）。読み込み済みの声はそのまま使える
+function aiRenew() { try { if (vpkCtx && vpkCtx.close) vpkCtx.close(); } catch (e) {} vpkCtx = null; aiFresh = false; return aiCtx(); }
 function aiTrim(ab) {
     try {
         const d = ab.getChannelData(0), th = 0.01, pad = Math.floor(ab.sampleRate * 0.015); let a = 0, b = d.length - 1;
@@ -1815,7 +1823,7 @@ function aiPrefetch() {
 // タップした瞬間に音の出口を開けておく（iPhone で、あとから AI の声をすぐ鳴らせるように）
 function aiUnlock() {
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
-    try { const c = aiCtx(); if (c.state !== 'running') c.resume(); const b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0); } catch (e) {}
+    try { let c = aiCtx(); if (aiFresh || c.state === 'interrupted' || c.state === 'closed') c = aiRenew(); if (c.state !== 'running') c.resume(); const b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0); } catch (e) {}
 }
 document.addEventListener('touchend', () => aiUnlock(), { passive: true });
 document.addEventListener('mousedown', () => aiUnlock(), { passive: true });
@@ -1824,11 +1832,30 @@ function sayAI(text, lang, cb) {
     const seq = ++speakSeq, voice = lang === 'ja' ? VPK_JA : VPK_EN, slang = lang === 'ja' ? 'ja-JP' : 'en-US';
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     aiStop();
+    // Web Audio が鳴らせないときは、ふつうの audio で鳴らす
+    const viaEl = () => vpkCacheGet(text, voice).then(buf => {
+        if (seq !== speakSeq) return;
+        if (!buf) { speak(text, slang, cb); return; }
+        if (!aiAudio) { aiAudio = new Audio(); aiAudio.setAttribute('playsinline', ''); }
+        const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }));
+        aiAudio.onended = () => { URL.revokeObjectURL(url); if (seq === speakSeq && cb) cb(); };
+        aiAudio.onerror = () => { URL.revokeObjectURL(url); if (seq === speakSeq) speak(text, slang, cb); };
+        aiAudio.src = url; const pr = aiAudio.play(); if (pr && pr.catch) pr.catch(() => { if (seq === speakSeq) speak(text, slang, cb); });
+    });
     const play = ab => {
         if (seq !== speakSeq) return;
         if (!ab) { speak(text, slang, cb); return; }   // AI の声がまだないときは、端末の声
+        let c = aiCtx();
+        if (c.state !== 'running') {
+            if (c.state === 'interrupted' || c.state === 'closed') c = aiRenew();
+            let ok = false; try { const r = c.resume(); if (r && r.then) r.then(() => { ok = true; }, () => {}); } catch (e) {}
+            setTimeout(() => { if (seq !== speakSeq) return; if (ok || c.state === 'running') start(c, ab); else viaEl(); }, 250);
+            return;
+        }
+        start(c, ab);
+    };
+    const start = (c, ab) => {
         try {
-            const c = aiCtx(); if (c.state !== 'running') c.resume();
             const s = c.createBufferSource(); s.buffer = ab; const g = c.createGain(); g.gain.value = ab._g || 1; s.connect(g); g.connect(c.destination);
             s.onended = () => { if (aiSrc === s) aiSrc = null; if (seq === speakSeq && cb) cb(); };
             aiSrc = s; s.start(0);
