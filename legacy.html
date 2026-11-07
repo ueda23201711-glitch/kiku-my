@@ -607,7 +607,7 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
 /* === Allow text selection on word/meaning (iPhone long-press copy) === */
 /* 訳が長いとき、下の本の名前と重ならないように（縮ませない） */
 #txt-word, #txt-meaning, #txt-src, #btn-edit-meaning, #txt-diff { flex-shrink: 0; }
-.diff-chip { display: inline-block; margin: 2px auto 4px; padding: 2px 10px; border-radius: 12px; font-size: 0.78rem; color: #fff; cursor: pointer; align-self: center; }
+.diff-chip { margin-top: 2px; font-size: 0.72rem; color: #aaa; cursor: pointer; align-self: center; }
 .word-text, .meaning-text {
   -webkit-user-select: text !important;
   user-select: text !important;
@@ -806,9 +806,9 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
             <button class="btn-audio" id="btn-audio" title="発音をもう一度" onclick="playWord(event)">🔊</button>
 
             <div id="txt-word" class="word-text" onclick="playWord(event)">Word</div>
-            <div id="txt-diff" class="diff-chip" style="display:none" onclick="diffExplain(event)" title="この単語の難しさの目安（使われる頻度から）"></div>
             <div id="txt-meaning" class="meaning-text hidden">意味</div>
             <div id="txt-src" style="font-size:0.8rem; color:#999; margin-top:6px;"></div>
+            <div id="txt-diff" class="diff-chip" style="display:none" onclick="diffExplain(event)" title="この単語の難しさの目安（使われる頻度から）"></div>
             <button id="btn-edit-meaning" class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="editMeaning(null, event)" title="この単語の日本語訳を書き換える">✎ 訳を直す</button>
 
             <button id="btn-show-meaning" class="btn-neutral" style="margin-top:10px; font-size:0.85rem; padding:8px 18px; border-radius:20px;" onclick="revealMeaning()">
@@ -2246,7 +2246,8 @@ function freqOf(text, m) {
     phrase: ws.length > 1
   };
 }
-var FREQ_BANDS = [[1500, 'A1', '入門', '#3b9b5c'], [3000, 'A2', '基礎', '#5a9e3a'], [6000, 'B1', '中級', '#2f7fb5'], [10000, 'B2', '中上級', '#b07a12'], [18000, 'C1', '上級', '#c4542a'], [35000, 'C2', '最上級', '#a02c4a'], [Infinity, '—', 'まれな語', '#6b4a8a']];
+// TOEIC の点数の目安（頻度の順位から当てはめたもの）
+var FREQ_BANDS = [[1500, '400点', 'TOEIC 400点レベル'], [3000, '500点', 'TOEIC 500点レベル'], [6000, '600点', 'TOEIC 600点レベル'], [10000, '730点', 'TOEIC 730点レベル'], [18000, '860点', 'TOEIC 860点レベル'], [35000, '990点', 'TOEIC 990点レベル'], [Infinity, '990点超', 'TOEIC ではまず出ないレベル']];
 function freqBand(rank) {
   for (var _iterator = _createForOfIteratorHelperLoose(FREQ_BANDS), _step; !(_step = _iterator()).done;) {
     var b = _step.value;
@@ -2270,9 +2271,8 @@ function diffShow(word) {
       f: f,
       b: b
     };
-    el.style.background = b[3];
-    el.textContent = (b[1] !== '—' ? b[1] + ' ' : '') + b[2] + '・' + (f.rank > 80000 ? '8万位より下' : '頻度 ' + f.rank.toLocaleString() + '位') + (f.phrase ? '（熟語）' : '');
-    el.style.display = 'inline-block';
+    el.textContent = b[2] + '（頻度 ' + (f.rank > 80000 ? '8万位より下' : f.rank.toLocaleString() + '位') + (f.phrase ? '・熟語' : '') + '）';
+    el.style.display = 'block';
   });
 }
 function diffExplain(e) {
@@ -2282,7 +2282,7 @@ function diffExplain(e) {
   }
   if (!diffNow) return;
   var r = diffNow.f.rank;
-  alert('「' + diffNow.w + '」の難しさの目安\n\n' + '・使われる頻度：' + (r > 80000 ? '8万位より下（とてもまれ）' : '英語でよく使われる順に ' + r.toLocaleString() + ' 番目') + '\n' + (diffNow.f.phrase ? '・熟語なので、中でいちばん使われない語の順位で判定しています（熟語そのものの難しさとは少し違います）。\n' : '') + '・目安：' + (diffNow.b[1] !== '—' ? 'CEFR ' + diffNow.b[1] + '（' + diffNow.b[2] + '）' : diffNow.b[2]) + '\n\n' + '頻度は wordfreq（字幕・ニュース・Wikipedia・本・ウェブなど、たくさんの英文から数えたデータ）によるものです。\n' + 'CEFR はヨーロッパ共通参照枠の6段階（A1 入門 → C2 最上級）で、ここでは頻度の順位から当てはめた目安です（公式の判定ではありません）。\n\n' + '区切り：A1 〜1,500位／A2 〜3,000位／B1 〜6,000位／B2 〜1万位／C1 〜1.8万位／C2 〜3.5万位／それより下は「まれな語」');
+  alert('「' + diffNow.w + '」の難しさの目安\n\n' + '・使われる頻度：' + (r > 80000 ? '8万位より下（とてもまれ）' : '英語でよく使われる順に ' + r.toLocaleString() + ' 番目') + '\n' + (diffNow.f.phrase ? '・熟語なので、中でいちばん使われない語の順位で判定しています（熟語そのものの難しさとは少し違います）。\n' : '') + '・目安：' + diffNow.b[2] + '\n\n' + '頻度は wordfreq（字幕・ニュース・Wikipedia・本・ウェブなど、たくさんの英文から数えたデータ）によるものです。\n' + 'TOEIC の点数は、頻度の順位から当てはめた大まかな目安です（TOEIC が公式に決めたものではありません）。\n\n' + '区切り：400点 〜1,500位／500点 〜3,000位／600点 〜6,000位／730点 〜1万位／860点 〜1.8万位／990点 〜3.5万位／それより下は「TOEIC ではまず出ない」');
 }
 function shortMean(m) {
   var t = String(m || '').replace(/〈[^〉]*〉|《[^》]*》|\[[^\]]*\]|【[^】]*】|\([^)]*\)|（[^）]*）|『|』|「|」/g, '');
