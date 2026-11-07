@@ -1,4 +1,4 @@
-const CACHE_NAME = "kikutan-my-v50";
+const CACHE_NAME = "kikutan-my-v51";
 const ASSETS = [
   "./",
   "./index.html",
@@ -31,7 +31,7 @@ self.addEventListener("fetch", (event) => {
   // ただし電波が弱くて 4 秒たっても届かないときは、保存してある版をすぐ出す（真っ白のまま待たせない）
   if (req.mode === "navigate") {
     const cached = () => caches.match(req).then((c) => c || caches.match("./index.html"));
-    const net = fetch(req).then((res) => {
+    const net = fetch(req, { cache: "no-cache" }).then((res) => {
       if (res && res.ok) { const copy = res.clone(); caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)); }
       return res;
     });
