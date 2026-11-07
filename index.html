@@ -1854,10 +1854,12 @@ function sayAI(text, lang, cb) {
         if (seq !== speakSeq) return;
         if (!ab) { speak(text, slang, cb); return; }   // AI の声がまだないときは、端末の声
         let c = aiCtx();
-        if (c.state !== 'running') {
-            if (c.state === 'interrupted' || c.state === 'closed') c = aiRenew();
-            let ok = false; try { const r = c.resume(); if (r && r.then) r.then(() => { ok = true; }, () => {}); } catch (e) {}
-            setTimeout(() => { if (seq !== speakSeq) return; if (ok || c.state === 'running') start(c, ab); else viaEl(); }, 250);
+        if (aiFresh || c.state !== 'running') {
+            // タップの中で作り直して、待たずにすぐ鳴らす（待ってから鳴らすと iPhone に止められて端末の声になってしまう）
+            if (aiFresh || c.state === 'interrupted' || c.state === 'closed') c = aiRenew();
+            try { c.resume(); } catch (e) {}
+            const s = start(c, ab);
+            setTimeout(() => { if (seq === speakSeq && c.state !== 'running') { try { if (s) { s.onended = null; s.stop(); } } catch (e) {} viaEl(); } }, 400);
             return;
         }
         start(c, ab);
@@ -1866,7 +1868,7 @@ function sayAI(text, lang, cb) {
         try {
             const s = c.createBufferSource(); s.buffer = ab; const g = c.createGain(); g.gain.value = ab._g || 1; s.connect(g); g.connect(c.destination);
             s.onended = () => { if (aiSrc === s) aiSrc = null; if (seq === speakSeq && cb) cb(); };
-            aiSrc = s; s.start(0);
+            aiSrc = s; s.start(0); return s;
         } catch (e) { speak(text, slang, cb); }
     };
     const v = aiBufs.get(voice + '|' + text);
@@ -2085,7 +2087,7 @@ setInterval(updateNoteSayButton, 800);
 function playNoteEnglish(e) {
     if (e) { e.stopPropagation(); e.preventDefault(); }
     const t = noteEnglish();
-    if (t) speak(t, 'en-US');
+    if (t) { aiStop(); speak(t, 'en-US'); aiFresh = true; }   // 端末の声を使ったあとは、次の AI の声の前に音の出口を作り直す
 }
 
 let lastPlayWordAt = 0;

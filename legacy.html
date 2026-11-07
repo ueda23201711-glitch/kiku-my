@@ -2862,19 +2862,24 @@ function sayAI(text, lang, cb) {
       return;
     } // AI の声がまだないときは、端末の声
     var c = aiCtx();
-    if (c.state !== 'running') {
-      if (c.state === 'interrupted' || c.state === 'closed') c = aiRenew();
-      var ok = false;
+    if (aiFresh || c.state !== 'running') {
+      // タップの中で作り直して、待たずにすぐ鳴らす（待ってから鳴らすと iPhone に止められて端末の声になってしまう）
+      if (aiFresh || c.state === 'interrupted' || c.state === 'closed') c = aiRenew();
       try {
-        var r = c.resume();
-        if (r && r.then) r.then(function () {
-          ok = true;
-        }, function () {});
+        c.resume();
       } catch (e) {}
+      var s = start(c, ab);
       setTimeout(function () {
-        if (seq !== speakSeq) return;
-        if (ok || c.state === 'running') start(c, ab);else viaEl();
-      }, 250);
+        if (seq === speakSeq && c.state !== 'running') {
+          try {
+            if (s) {
+              s.onended = null;
+              s.stop();
+            }
+          } catch (e) {}
+          viaEl();
+        }
+      }, 400);
       return;
     }
     start(c, ab);
@@ -2893,6 +2898,7 @@ function sayAI(text, lang, cb) {
       };
       aiSrc = s;
       s.start(0);
+      return s;
     } catch (e) {
       speak(text, slang, cb);
     }
@@ -3146,7 +3152,11 @@ function playNoteEnglish(e) {
     e.preventDefault();
   }
   var t = noteEnglish();
-  if (t) speak(t, 'en-US');
+  if (t) {
+    aiStop();
+    speak(t, 'en-US');
+    aiFresh = true;
+  } // 端末の声を使ったあとは、次の AI の声の前に音の出口を作り直す
 }
 var lastPlayWordAt = 0;
 function playWord(e) {
