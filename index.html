@@ -523,7 +523,8 @@
 
 /* === Allow text selection on word/meaning (iPhone long-press copy) === */
 /* 訳が長いとき、下の本の名前と重ならないように（縮ませない） */
-#txt-word, #txt-meaning, #txt-src, #btn-edit-meaning { flex-shrink: 0; }
+#txt-word, #txt-meaning, #txt-src, #btn-edit-meaning, #txt-diff { flex-shrink: 0; }
+.diff-chip { display: inline-block; margin: 2px auto 4px; padding: 2px 10px; border-radius: 12px; font-size: 0.78rem; color: #fff; cursor: pointer; align-self: center; }
 .word-text, .meaning-text {
   -webkit-user-select: text !important;
   user-select: text !important;
@@ -707,6 +708,7 @@
             <button class="btn-audio" id="btn-audio" title="発音をもう一度" onclick="playWord(event)">🔊</button>
 
             <div id="txt-word" class="word-text" onclick="playWord(event)">Word</div>
+            <div id="txt-diff" class="diff-chip" style="display:none" onclick="diffExplain(event)" title="この単語の難しさの目安（使われる頻度から）"></div>
             <div id="txt-meaning" class="meaning-text hidden">意味</div>
             <div id="txt-src" style="font-size:0.8rem; color:#999; margin-top:6px;"></div>
             <button id="btn-edit-meaning" class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="editMeaning(null, event)" title="この単語の日本語訳を書き換える">✎ 訳を直す</button>
@@ -1616,6 +1618,77 @@ function showScreen(id) {
 }
 
 // 聞き流し用：日本語訳を1つだけ、短く（〈 〉や（ ）の説明を除いて、最初の意味だけ）
+// ---- 単語の難しさの目安：英語でどれくらい使われるか（頻度の順位）と、そこから当てはめた CEFR の目安 ----
+// 順位のデータ：wordfreq（字幕・ニュース・Wikipedia・本・ウェブなど多くの英文から数えたもの、CC BY-SA 4.0）の上位 8 万語
+const FREQ_URL = '/eibun-reader/vendor/wordfreq/en-rank.txt';
+let freqRank = null, freqWait = null;
+function freqLoad() {
+    if (freqRank) return Promise.resolve(freqRank);
+    if (freqWait) return freqWait;
+    const parse = t => { const m = {}; String(t || '').split('\n').forEach((w, i) => { if (w && !m[w]) m[w] = i + 1; }); return m; };
+    const get = () => fetch(FREQ_URL).then(r => r.ok ? r.text() : Promise.reject(r.status));
+    freqWait = (window.caches ? caches.open('freq-v1').then(c => c.match(FREQ_URL).then(hit => hit ? hit.text() : get().then(t => { try { c.put(FREQ_URL, new Response(t)); } catch (e) {} return t; }))) : get())
+        .then(t => { freqRank = parse(t); return freqRank; }).catch(() => { freqWait = null; return null; });
+    return freqWait;
+}
+const FREQ_STOP = { a: 1, an: 1, the: 1, of: 1, to: 1, in: 1, on: 1, at: 1, for: 1, by: 1, with: 1, from: 1, up: 1, down: 1, out: 1, off: 1, over: 1, into: 1, and: 1, or: 1, as: 1, one: 1, "one's": 1, someone: 1, "someone's": 1, something: 1, sb: 1, sth: 1, be: 1, is: 1, it: 1, oneself: 1, '~': 1 };
+// 活用形（-s, -ed, -ing など）は、もとの形の順位も調べて、よく使われるほうを使う
+function freqOne(w, m) {
+    w = String(w).toLowerCase().replace(/[’]/g, "'").replace(/^[^a-z]+|[^a-z]+$/g, '');
+    if (!w) return 0;
+    const c = [w], L = w.length;
+    if (L > 4) {
+        if (/ies$/.test(w)) c.push(w.slice(0, -3) + 'y');
+        if (/ied$/.test(w)) c.push(w.slice(0, -3) + 'y');
+        if (/(s|x|z|ch|sh)es$/.test(w)) c.push(w.slice(0, -2));
+        if (/s$/.test(w) && !/ss$/.test(w)) c.push(w.slice(0, -1));
+        if (/ed$/.test(w)) { c.push(w.slice(0, -2), w.slice(0, -1)); if (/([b-df-hj-np-tv-z])\1ed$/.test(w)) c.push(w.slice(0, -3)); }
+        if (/ing$/.test(w)) { c.push(w.slice(0, -3), w.slice(0, -3) + 'e'); if (/([b-df-hj-np-tv-z])\1ing$/.test(w)) c.push(w.slice(0, -4)); }
+        if (/(er|est)$/.test(w)) { c.push(w.replace(/(er|est)$/, ''), w.replace(/(r|st)$/, '')); }
+        if (/ier$|iest$/.test(w)) c.push(w.replace(/ier$|iest$/, 'y'));
+    }
+    let best = 0; c.forEach(x => { const r = m[x]; if (r && (!best || r < best)) best = r; });
+    return best || 99999;
+}
+function freqOf(text, m) {
+    const ws = String(text || '').toLowerCase().split(/[\s\-\/]+/).filter(Boolean);
+    if (!ws.length) return null;
+    const content = ws.filter(w => !FREQ_STOP[w.replace(/[^a-z'~]/g, '')]);
+    const use = content.length ? content : ws;
+    let worst = 0; use.forEach(w => { const r = freqOne(w, m); if (r > worst) worst = r; });
+    return { rank: worst, phrase: ws.length > 1 };
+}
+const FREQ_BANDS = [
+    [1500, 'A1', '入門', '#3b9b5c'], [3000, 'A2', '基礎', '#5a9e3a'], [6000, 'B1', '中級', '#2f7fb5'],
+    [10000, 'B2', '中上級', '#b07a12'], [18000, 'C1', '上級', '#c4542a'], [35000, 'C2', '最上級', '#a02c4a'], [Infinity, '—', 'まれな語', '#6b4a8a']
+];
+function freqBand(rank) { for (const b of FREQ_BANDS) if (rank <= b[0]) return b; return FREQ_BANDS[FREQ_BANDS.length - 1]; }
+let diffNow = null;
+function diffShow(word) {
+    const el = document.getElementById('txt-diff'); if (!el) return;
+    el.style.display = 'none'; diffNow = null;
+    freqLoad().then(m => {
+        if (!m || !studyQueue[currentIndex] || studyQueue[currentIndex].w !== word) return;
+        const f = freqOf(word, m); if (!f) return;
+        const b = freqBand(f.rank); diffNow = { w: word, f: f, b: b };
+        el.style.background = b[3];
+        el.textContent = (b[1] !== '—' ? b[1] + ' ' : '') + b[2] + '・' + (f.rank > 80000 ? '8万位より下' : '頻度 ' + f.rank.toLocaleString() + '位') + (f.phrase ? '（熟語）' : '');
+        el.style.display = 'inline-block';
+    });
+}
+function diffExplain(e) {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    if (!diffNow) return;
+    const r = diffNow.f.rank;
+    alert('「' + diffNow.w + '」の難しさの目安\n\n'
+        + '・使われる頻度：' + (r > 80000 ? '8万位より下（とてもまれ）' : '英語でよく使われる順に ' + r.toLocaleString() + ' 番目') + '\n'
+        + (diffNow.f.phrase ? '・熟語なので、中でいちばん使われない語の順位で判定しています（熟語そのものの難しさとは少し違います）。\n' : '')
+        + '・目安：' + (diffNow.b[1] !== '—' ? 'CEFR ' + diffNow.b[1] + '（' + diffNow.b[2] + '）' : diffNow.b[2]) + '\n\n'
+        + '頻度は wordfreq（字幕・ニュース・Wikipedia・本・ウェブなど、たくさんの英文から数えたデータ）によるものです。\n'
+        + 'CEFR はヨーロッパ共通参照枠の6段階（A1 入門 → C2 最上級）で、ここでは頻度の順位から当てはめた目安です（公式の判定ではありません）。\n\n'
+        + '区切り：A1 〜1,500位／A2 〜3,000位／B1 〜6,000位／B2 〜1万位／C1 〜1.8万位／C2 〜3.5万位／それより下は「まれな語」');
+}
+
 function shortMean(m) {
     let t = String(m || '').replace(/〈[^〉]*〉|《[^》]*》|\[[^\]]*\]|【[^】]*】|\([^)]*\)|（[^）]*）|『|』|「|」/g, '');
     const parts = t.split(/[、,，;；\/／・]|\s{2,}/).map(x => x.replace(/^[\s…\.〜～]+|[\s…\.]+$/g, '').replace(/[A-Za-z]+/g, '').trim()).filter(x => x.length >= 1);
@@ -1954,6 +2027,7 @@ function renderCard() {
 
     document.getElementById('progress-text').innerText = `${currentIndex + 1} / ${studyQueue.length} (No.${item.n})`;
     document.getElementById('txt-word').innerText = item.w;
+    diffShow(item.w);
     document.getElementById('txt-meaning').innerText = item.m;
     document.getElementById('txt-src').innerText = item.s ? '📚 ' + item.s : '';
     document.getElementById('txt-meaning').classList.add('hidden');
