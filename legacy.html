@@ -897,6 +897,8 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
                 <option value="4">LV.4</option>
                 <option value="5">LV.5 (完璧)</option>
             </select>
+            <input id="listQ" type="search" placeholder="🔍 単語・訳でさがす（選んだ本の中で）" autocomplete="off" autocapitalize="off" spellcheck="false" oninput="listQSoon()" style="flex:1 1 70%; min-width:0; max-width:100%; font-size:16px; padding:6px 8px; box-sizing:border-box; border:1px solid #ccc; border-radius:8px;">
+            <span id="listQn" style="flex:0 0 auto; align-self:center; font-size:0.8rem; color:#8a5a00;"></span>
             <select id="selListSrc" class="hidden" onchange="renderListTable()" style="flex:1 1 45%; min-width:0; max-width:100%;"></select>
             <select id="selGrpSort" class="hidden" onchange="grpSortSave(); renderListTable()" style="flex:1 1 100%; min-width:0; max-width:100%; font-weight:bold;"><option value="new">並び：新しく保存した本から</option><option value="fav">並び：★の多い本から</option><option value="name">並び：題名の順</option><option value="count">並び：単語の多い本から</option></select>
             <select id="selListResultFilter" onchange="renderListTable()" style="flex:1 1 30%; min-width:0;">
@@ -4302,8 +4304,28 @@ function showList() {
   showScreen('screen-list');
   renderListTable();
 }
+
+// 🔍 一覧の中で単語をさがす（英単語・訳の両方。本を選んでいれば、その本の中だけ）
+var listQT = null;
+function listQSoon() {
+  if (listQT) clearTimeout(listQT);
+  listQT = setTimeout(function () {
+    renderListTable();
+    listQCount();
+  }, 200);
+}
+function listQCount() {
+  var el = document.getElementById('listQn');
+  if (el) el.textContent = listQGet() ? listShown.length ? listShown.length + '語' : '見つかりません' : '';
+}
+function listQGet() {
+  var el = document.getElementById('listQ');
+  return el ? el.value.trim().toLowerCase() : '';
+}
 function renderListTable() {
   var tbody = document.querySelector('#list-table tbody');
+  var q = listQGet();
+  setTimeout(listQCount, 0);
   var filterLv = document.getElementById('selListLevelFilter').value;
   var filterResult = document.getElementById('selListResultFilter').value;
   var filterSrc = document.getElementById('selListSrc') ? document.getElementById('selListSrc').value : '';
@@ -4339,6 +4361,7 @@ function renderListTable() {
   order.forEach(function (item) {
     var st = getStatus(item.n);
     if (!srcMatch(item, filterSrc)) return;
+    if (q && String(item.w).toLowerCase().indexOf(q) < 0 && String(item.m || '').toLowerCase().indexOf(q) < 0) return;
     if (filterLv !== 'all' && String(st.level) !== filterLv) return;
     if (filterResult !== 'all') {
       if (filterResult === 'unknown' && st.result !== 'unknown') return;
@@ -4348,7 +4371,7 @@ function renderListTable() {
       lastGrp = item.s || '';
       var g = lastGrp,
         hr = document.createElement('tr'),
-        open = !!grpOpen[g];
+        open = !!grpOpen[g] || !!q; // さがしているときは、見つかった本を開いて見せる
       grpShut = !open;
       hr.style.cursor = 'pointer';
       hr.onclick = function () {
