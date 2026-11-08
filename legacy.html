@@ -2908,13 +2908,24 @@ function aiGain(ab) {
     return 1;
   }
 }
+// AI の声をネットから取れるか（Apps Script の URL があって、ネットにつながっている。古い iPad は除く）
+function aiCloudOk() {
+  return !!(window.caches && (window.AudioContext || window.webkitAudioContext)) && navigator.onLine !== false && !!(gasUrlK() || cloudKey());
+}
 function aiPrep(text, voice) {
   var key = voice + '|' + text;
   if (aiBufs.has(key)) {
     var v = aiBufs.get(key);
     return v && v.then ? v : Promise.resolve(v);
   }
+  // 端末に保存した AI の声 → なければネット（Apps Script）から取ってきて保存（先読みもするので、たいていは鳴らす前に届いている）
   var pr = vpkCacheGet(text, voice).then(function (buf) {
+    return buf || (aiCloudOk() ? gasEnsure().then(function () {
+      return vpkGet(text, voice);
+    }).then(function (r) {
+      return r && r.b || null;
+    }) : null);
+  }).then(function (buf) {
     return buf ? vpkDecode(buf) : null;
   }).then(function (ab) {
     var v = ab ? aiTrim(ab) : null;
@@ -3085,7 +3096,21 @@ function sayAI(text, lang, cb) {
   };
   var v = aiBufs.get(voice + '|' + text);
   if (v !== undefined && !(v && v.then)) play(v); // 読み込み済み：待たずにすぐ鳴らす
-  else aiPrep(text, voice).then(play);
+  else {
+    // ネットから取っている途中：2.5 秒で届かなければ端末の声で（電波が弱いとき。端末の声が使えない端末は待つ）
+    var fired = false;
+    var t = ttsBroken ? 0 : setTimeout(function () {
+      if (fired || seq !== speakSeq) return;
+      fired = true;
+      speak(text, slang, cb);
+    }, 2500);
+    aiPrep(text, voice).then(function (ab) {
+      if (fired) return;
+      fired = true;
+      if (t) clearTimeout(t);
+      play(ab);
+    });
+  }
 }
 function stopAllAudio() {
   if (listenTimer) {
