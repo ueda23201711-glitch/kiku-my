@@ -2233,9 +2233,15 @@ function voiceDiag(uttr) {
         : '声の数：全部 ' + vs.length + '・英語 ' + en.length + '・日本語 ' + ja.length + (vs.length ? '' : '（0 のときは、端末の「設定 → テキスト読み上げ（音声出力）」で Google の音声エンジンを入れてください）');
     el.textContent = base + '\n調べています…';
     if (!uttr) return;
-    uttr.addEventListener('start', () => log.push('開始 ' + (Date.now() - t0) + 'ms'));
-    uttr.addEventListener('end', () => { log.push('終了'); el.textContent = base + '\n' + log.join('・'); });
-    uttr.addEventListener('error', (e) => { log.push('エラー：' + (e.error || '?')); el.textContent = base + '\n' + log.join('・') + (e.error === 'not-allowed' ? '（画面をタップしてから、もう一度試してください）' : ''); });
+    const watch = (u) => {
+        const vn = u.voice ? u.voice.name + '（' + u.voice.lang + (u.voice.localService ? '' : '・ネット') + '）' : '端末の標準の声';
+        u.addEventListener('start', () => log.push(vn + '：開始 ' + (Date.now() - t0) + 'ms'));
+        u.addEventListener('end', () => { log.push('終了'); diagHook = null; el.textContent = base + '\n' + log.join('・'); });
+        u.addEventListener('error', (e) => { log.push(vn + '：エラー ' + (e.error || '?')); el.textContent = base + '\n' + log.join('\n')
+            + (e.error === 'not-allowed' ? '（画面をタップしてから、もう一度試してください）'
+              : e.error === 'synthesis-failed' && !u.voice ? '\n→ 端末の読み上げで英語の声が作れません。端末の「設定」で「テキスト読み上げ」を探し、エンジンを「Google の音声サービス」にして、「音声データをインストール」から英語（米国）を入れてください。' : ''); });
+    };
+    watch(uttr); diagHook = watch; setTimeout(() => { if (diagHook === watch) diagHook = null; }, 8000);
     setTimeout(() => { if (!log.length) el.textContent = base + '\n3 秒たっても読み上げが始まりませんでした。端末の「テキスト読み上げ」の設定（エンジンと言語のデータ）を確かめてください。'; }, 3000);
 }
 function pickVoice(lang) {
@@ -2243,10 +2249,10 @@ function pickVoice(lang) {
         const saved = (() => { try { return lsGet('voice_en') || ''; } catch (e) { return ''; } })();
         if (saved) {
             const v = cachedVoices.find(x => x.voiceURI === saved);
-            if (v) return v;
+            if (v && badVoices.indexOf(v.voiceURI) < 0) return v;
         }
     }
-    const list = rankedVoices(lang);
+    const list = rankedVoices(lang).filter(v => badVoices.indexOf(v.voiceURI) < 0);
     return list.length && voiceScore(list[0], lang) > -100 ? list[0] : null;
 }
 
@@ -2299,7 +2305,10 @@ function unlockSpeech() {
 );
 
 let speakSeq = 0;
-let lastUttr = null;
+let lastUttr = null, diagHook = null;
+// 読み上げに失敗した声（この端末では使えない声）。覚えておいて、次からは選ばない
+let badVoices = (() => { try { return JSON.parse(lsGet('voice_bad') || '[]'); } catch (e) { return []; } })();
+function badVoiceAdd(uri) { if (!uri || badVoices.indexOf(uri) >= 0) return; badVoices.push(uri); try { lsSet('voice_bad', JSON.stringify(badVoices.slice(-30))); } catch (e) {} }
 function speak(text, lang, callback) {
     if (!('speechSynthesis' in window)) { if (callback) callback(); return; }
     const synth = window.speechSynthesis;
@@ -2317,8 +2326,16 @@ function speak(text, lang, callback) {
     if (voice) uttr.voice = voice;
     uttr.rate = 1.0;
     uttr.onend = finish;
-    uttr.onerror = finish;
+    // Android：選んだ声のデータが端末にない（ネットの声・未ダウンロード）と synthesis-failed になる。
+    // その声を使わないことにして、次の声（最後は声を指定しない＝端末の標準）で読み直す
+    uttr.onerror = (e) => {
+        if (e && e.error === 'synthesis-failed' && seq === speakSeq && !done) {
+            if (uttr.voice) { badVoiceAdd(uttr.voice.voiceURI); done = true; speak(text, lang, callback); return; }
+        }
+        finish();
+    };
     lastUttr = uttr;
+    if (diagHook) diagHook(uttr);
 
     const doSpeak = () => {
         if (seq !== speakSeq) return;
