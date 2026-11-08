@@ -2284,6 +2284,7 @@ function saveVoiceChoice() {
     try { lsSet('voice_en', sel.value); } catch (e) {}
 }
 function testVoice() {
+    badVoices = []; try { lsSet('voice_bad', '[]'); } catch (e) {}   // 試すときは、前に失敗した声ももう一度ためす（音声データを入れたあとなど）
     lastUttr = null;
     speak('The quarterly report has been submitted. accommodate', 'en-US');
     voiceDiag(lastUttr);
