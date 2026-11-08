@@ -3038,9 +3038,9 @@ function sayAI(text, lang, cb) {
   var play = function play(ab) {
     if (seq !== speakSeq) return;
     if (!ab) {
-      speak(text, slang, cb);
+      if (ttsBroken) aiCloud(text, slang, cb);else speak(text, slang, cb);
       return;
-    } // AI の声がまだないときは、端末の声
+    } // AI の声がまだないときは、端末の声（使えない端末は AI の声を取りに行く）
     var c = aiCtx();
     if (aiFresh || c.state !== 'running') {
       // タップの中で作り直して、待たずにすぐ鳴らす（待ってから鳴らすと iPhone に止められて端末の声になってしまう）
@@ -3434,7 +3434,7 @@ function voiceDiag(uttr) {
     });
     u.addEventListener('error', function (e) {
       log.push(vn + '：エラー ' + (e.error || '?'));
-      el.textContent = base + '\n' + log.join('\n') + (e.error === 'not-allowed' ? '（画面をタップしてから、もう一度試してください）' : e.error === 'synthesis-failed' && !u.voice ? '\n→ 端末の読み上げで英語の声が作れません。端末の「設定」で「テキスト読み上げ」を探し、エンジンを「Google の音声サービス」にして、「音声データをインストール」から英語（米国）を入れてください。' : '');
+      el.textContent = base + '\n' + log.join('\n') + (e.error === 'not-allowed' ? '（画面をタップしてから、もう一度試してください）' : e.error === 'synthesis-failed' && !u.voice ? '\n→ この端末の読み上げで英語の声が作れないので、代わりに AI の声（ネットから取る）で読みます。端末の声を使いたいときは、端末の「設定」で「テキスト読み上げ」を探し、エンジンを「Google の音声サービス」にして、「音声データをインストール」から英語（米国）を入れてください。' : '');
     });
   };
   watch(uttr);
@@ -3514,6 +3514,10 @@ function testVoice() {
   try {
     lsSet('voice_bad', '[]');
   } catch (e) {} // 試すときは、前に失敗した声ももう一度ためす（音声データを入れたあとなど）
+  ttsBroken = false;
+  try {
+    lsSet('tts_broken', '0');
+  } catch (e) {}
   lastUttr = null;
   speak('The quarterly report has been submitted. accommodate', 'en-US');
   voiceDiag(lastUttr);
@@ -3539,6 +3543,47 @@ function unlockSpeech() {
 var speakSeq = 0;
 var lastUttr = null,
   diagHook = null;
+// この端末の読み上げ（端末の声）が使えない（Android で音声データがないなど）。そのときは AI の声をネットから取って読む
+var ttsBroken = function () {
+  try {
+    return lsGet('tts_broken') === '1';
+  } catch (e) {
+    return false;
+  }
+}();
+var aiCloudTried = {};
+function aiCloud(text, slang, cb) {
+  var ja = /^ja/i.test(slang),
+    voice = ja ? VPK_JA : VPK_EN,
+    k = voice + '|' + text;
+  if (aiCloudTried[k]) {
+    if (cb) cb();
+    return;
+  } // 一度試してだめだった（同じ所を回らないように）
+  aiCloudTried[k] = 1;
+  var seq = speakSeq;
+  gasEnsure().then(function () {
+    return vpkGet(text, voice);
+  }).then(function (r) {
+    if (seq !== speakSeq) return;
+    if (!r || !r.b) {
+      if (cb) cb();
+      return;
+    }
+    // 取ってきた声をそのまま読み込んでから鳴らす（端末への保存の完了を待たない）
+    vpkDecode(r.b).then(function (ab) {
+      if (seq !== speakSeq) return;
+      if (!ab) {
+        if (cb) cb();
+        return;
+      }
+      var v = aiTrim(ab);
+      v._g = aiGain(v);
+      aiBufs.set(k, v);
+      sayAI(text, ja ? 'ja' : 'en', cb);
+    });
+  });
+}
 // 読み上げに失敗した声（この端末では使えない声）。覚えておいて、次からは選ばない
 var badVoices = function () {
   try {
@@ -3583,6 +3628,14 @@ function speak(text, lang, callback) {
         speak(text, lang, callback);
         return;
       }
+      // 端末の声が1つも使えない：AI の声（Apps Script）を取りに行って読む。次からも最初から AI の声にする
+      ttsBroken = true;
+      try {
+        lsSet('tts_broken', '1');
+      } catch (x) {}
+      done = true;
+      aiCloud(text, lang, callback);
+      return;
     }
     finish();
   };
