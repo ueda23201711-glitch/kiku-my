@@ -768,6 +768,8 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
             <div id="cloud-ready" class="hidden">
                 <button class="btn-outline btn-block" onclick="cloudPull(true)">↻ クラウドから読み込み直す</button>
                 <button class="btn-outline btn-block" onclick="cloudPushManual()">この端末の単語データをクラウドに保存</button>
+                <button class="btn-outline btn-block" onclick="vbkRestoreUi()">📦 控えから単語を戻す</button>
+                <div id="vbk-box"></div>
             </div>
             <div id="cloud-msg" style="font-size:0.85rem; color:#ae2012; min-height:1em;"></div>
             <div style="font-size:0.82rem; color:#777; line-height:1.6; margin-top:8px;">暗証番号を設定すると、開いたときと、10分以上離れて戻ったときに聞きます（英文リーダーと共通・この端末だけ）。</div>
@@ -1565,7 +1567,10 @@ function cloudPushNow(cb) {
     words: masterTsv.trim(),
     updated: t
   }, function (err) {
-    if (!err) lsSet('cloud_updated', String(t));
+    if (!err) {
+      lsSet('cloud_updated', String(t));
+      vbkSoon();
+    }
     if (cb) cb(err);
   });
 }
@@ -1578,6 +1583,216 @@ function cloudPushManual() {
   cloudSetMsg('保存中…', true);
   cloudPush(function (err) {
     cloudSetMsg(err ? 'クラウドに保存できませんでした（' + cloudErrText(err) + '）。' : 'クラウドに保存しました（' + cloudWordCount() + '語）。', !err);
+  });
+}
+/* ===== 単語の控え（ドライブ。変わった単語の行だけ送る） =====
+   英文リーダーの Apps Script の控えフォルダに、この単語帳・この合言葉ごとの「単語の控え」を 1 つ持つ。
+   一度入った単語は控えから消えないので、一覧から消えても「📦 控えから単語を戻す」で戻せる */
+function vbkHash(str) {
+  var h = 0x811c9dc5;
+  for (var i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(36);
+}
+function vbkHex(str) {
+  if (!window.crypto || !crypto.subtle || !window.TextEncoder) return Promise.resolve('');
+  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then(function (h) {
+    return Array.prototype.map.call(new Uint8Array(h), function (b) {
+      return ('0' + b.toString(16)).slice(-2);
+    }).join('');
+  }).catch(function () {
+    return '';
+  });
+}
+function vbkApp() {
+  var key = cloudKey();
+  return key ? vbkHex('kiku-vbk|' + key + '|' + CLOUD_NODE).then(function (h) {
+    return h ? 'V' + h.slice(0, 24) : '';
+  }) : Promise.resolve('');
+}
+function gasPostK(body, cb) {
+  gasEnsure().then(function (url) {
+    var key = cloudKey();
+    if (!url || !key) {
+      cb(null);
+      return;
+    }
+    vbkHex('tegaki-gas|' + key).then(function (h) {
+      var x = new XMLHttpRequest();
+      x.open('POST', url + (url.indexOf('?') >= 0 ? '&' : '?') + 'tk=' + h.slice(0, 32), true);
+      x.timeout = 90000;
+      x.onreadystatechange = function () {
+        if (x.readyState !== 4) return;
+        var d = null;
+        try {
+          d = JSON.parse(x.responseText);
+        } catch (e) {}
+        cb(d);
+      };
+      x.ontimeout = function () {
+        cb(null);
+      };
+      x.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
+      x.send(JSON.stringify(body));
+    });
+  });
+}
+function vbkLines() {
+  var out = {};
+  masterTsv.split('\n').forEach(function (l) {
+    var w = l.split('\t')[0].trim().toLowerCase();
+    if (w && !/^#/.test(w)) out[w] = l.replace(/\r$/, '');
+  });
+  return out;
+}
+var vbkT = null,
+  vbkBusy = false;
+function vbkSoon() {
+  if (vbkT) clearTimeout(vbkT);
+  vbkT = setTimeout(vbkRun, 8000);
+}
+function vbkRun() {
+  vbkT = null;
+  if (vbkBusy || !cloudKey() || !gasUrlK() || navigator.onLine === false) return;
+  var sent = {};
+  try {
+    sent = JSON.parse(lsGet('vbk_sent') || '{}') || {};
+  } catch (e) {
+    sent = {};
+  }
+  var cur = vbkLines(),
+    ch = [],
+    t = Date.now();
+  for (var w in cur) {
+    var h = vbkHash(cur[w]);
+    if (sent[w] !== h) ch.push([w, cur[w], t, h]);
+  }
+  if (!ch.length) return;
+  vbkBusy = true;
+  vbkApp().then(function (app) {
+    if (!app) {
+      vbkBusy = false;
+      return;
+    }
+    var part = ch.slice(0, 2000);
+    gasPostK({
+      act: 'vput',
+      app: app,
+      lines: part.map(function (x) {
+        return [x[0], x[1], x[2]];
+      })
+    }, function (d) {
+      vbkBusy = false;
+      if (!d || !d.ok) return;
+      part.forEach(function (x) {
+        sent[x[0]] = x[3];
+      });
+      lsSet('vbk_sent', JSON.stringify(sent));
+      if (ch.length > part.length) vbkSoon();
+    });
+  });
+}
+// 控えから単語を戻す（いまの一覧にない単語だけ）
+function vbkRestoreUi() {
+  var box = document.getElementById('vbk-box');
+  var msg = function msg(t) {
+    box.innerHTML = '';
+    var p = document.createElement('div');
+    p.style.cssText = 'font-size:0.85rem; color:#555; padding:6px 0;';
+    p.textContent = t;
+    box.appendChild(p);
+  };
+  if (!cloudKey()) {
+    msg('合言葉を設定してください。');
+    return;
+  }
+  msg('控えを読んでいます…');
+  vbkApp().then(function (app) {
+    if (!app) {
+      msg('この端末では控えを読めません（新しい端末で開いてください）。');
+      return;
+    }
+    gasPostK({
+      act: 'vget',
+      app: app
+    }, function (d) {
+      if (!d || !d.ok) {
+        msg('控えを読めませんでした（英文リーダーの Apps Script を最新に貼り替えてください）。');
+        return;
+      }
+      var m = {};
+      try {
+        m = JSON.parse(d.data || '{}') || {};
+      } catch (e) {}
+      var have = vbkLines();
+      var miss = Object.keys(m).filter(function (w) {
+        return !have[w] && m[w] && m[w].l;
+      }).sort(function (a, b) {
+        return (m[b].t || 0) - (m[a].t || 0);
+      });
+      if (!miss.length) {
+        msg('いまの一覧にない単語の控えはありません（控え ' + Object.keys(m).length + ' 語）。');
+        return;
+      }
+      box.innerHTML = '';
+      var head = document.createElement('div');
+      head.style.cssText = 'font-size:0.85rem; color:#555; padding:6px 0;';
+      head.textContent = 'いまの一覧にない単語：' + miss.length + ' 語。戻すものに印をつけてください。';
+      box.appendChild(head);
+      var all = document.createElement('label');
+      all.style.cssText = 'display:block; font-size:0.85rem; padding:4px 0;';
+      var ca = document.createElement('input');
+      ca.type = 'checkbox';
+      all.appendChild(ca);
+      all.appendChild(document.createTextNode(' ぜんぶ選ぶ'));
+      box.appendChild(all);
+      var list = document.createElement('div');
+      list.style.cssText = 'max-height:260px; overflow:auto; border:1px solid #ddd; border-radius:6px; padding:4px 8px;';
+      box.appendChild(list);
+      var cks = [];
+      miss.forEach(function (w) {
+        var row = document.createElement('label');
+        row.style.cssText = 'display:block; font-size:0.85rem; padding:3px 0;';
+        var ck = document.createElement('input');
+        ck.type = 'checkbox';
+        ck.value = w;
+        cks.push(ck);
+        var dt = m[w].t ? new Date(m[w].t) : null,
+          mean = (m[w].l.split('\t')[1] || '').slice(0, 30);
+        row.appendChild(ck);
+        row.appendChild(document.createTextNode(' ' + m[w].l.split('\t')[0] + (mean ? '　' + mean : '') + (dt ? '（' + (dt.getMonth() + 1) + '/' + dt.getDate() + '）' : '')));
+        list.appendChild(row);
+      });
+      ca.addEventListener('change', function () {
+        return cks.forEach(function (c) {
+          c.checked = ca.checked;
+        });
+      });
+      var go = document.createElement('button');
+      go.className = 'btn-secondary btn-block';
+      go.textContent = '↩ 選んだ単語を戻す';
+      box.appendChild(go);
+      go.addEventListener('click', function () {
+        var pick = cks.filter(function (c) {
+          return c.checked;
+        }).map(function (c) {
+          return m[c.value].l;
+        });
+        if (!pick.length) return;
+        masterTsv = masterTsv.replace(/\s+$/, '') + '\n' + pick.join('\n');
+        lsSet('master_tsv', masterTsv);
+        var ed = document.getElementById('data-editor');
+        if (ed) ed.value = masterTsv.trim();
+        parseData();
+        refreshMainStats();
+        msg(pick.length + ' 語を戻しました。' + (cloudKey() ? 'クラウドに保存しています…' : ''));
+        cloudPush(function (err) {
+          return msg(pick.length + ' 語を戻しました。' + (err ? 'クラウドへの保存はできませんでした（' + cloudErrText(err) + '）。' : 'クラウドにも保存しました。'));
+        });
+      });
+    });
   });
 }
 // クラウドの単語データを読む。クラウドが空で、端末に単語があれば自動で保存する
@@ -1627,6 +1842,7 @@ function cloudPullDone(err, data, manual) {
     }
     if (data && data.words) {
       if (!data.same) applyWords(data.words, data.updated);
+      vbkSoon(); // 控え：変わった単語だけドライブにも（ほかの端末・英文リーダーで足された分も）
       renderCloudPanel();
       cloudSetMsg('クラウドの単語データを使っています（' + cloudWordCount() + '語）。', true);
       return;
