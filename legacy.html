@@ -1522,6 +1522,8 @@ function applyWords(tsv, updated) {
   parseData();
   refreshMainStats();
 }
+// クラウドへ単語データを送る。送る前にクラウドを読み、ほかの端末（英文リーダーなど）で前回より後に足された単語があれば、
+// 消さないように取り込んでから送る（前は、この端末の一覧でまるごと上書きしていた）
 function cloudPush(cb) {
   var key = cloudKey();
   if (!key) {
@@ -1530,6 +1532,34 @@ function cloudPush(cb) {
     });
     return;
   }
+  cloudReq('GET', '/memos/' + key + '/' + CLOUD_NODE, undefined, function (gerr, data) {
+    if (!gerr && data && data.words && Number(data.updated || 0) > Number(lsGet('cloud_updated') || 0)) {
+      var have = {};
+      masterTsv.split('\n').forEach(function (l) {
+        var w = l.split('\t')[0].trim().toLowerCase();
+        if (w) have[w] = 1;
+      });
+      var add = [];
+      String(data.words).split('\n').forEach(function (l) {
+        var w = l.split('\t')[0].trim().toLowerCase();
+        if (w && !have[w]) {
+          have[w] = 1;
+          add.push(l);
+        }
+      });
+      if (add.length) {
+        masterTsv = masterTsv.replace(/\s+$/, '') + '\n' + add.join('\n');
+        lsSet('master_tsv', masterTsv);
+        var ed = document.getElementById('data-editor');
+        if (ed) ed.value = masterTsv.trim();
+        parseData();
+      }
+    }
+    cloudPushNow(cb);
+  });
+}
+function cloudPushNow(cb) {
+  var key = cloudKey();
   var t = Date.now();
   cloudReq('PATCH', '/memos/' + key + '/' + CLOUD_NODE, {
     words: masterTsv.trim(),
