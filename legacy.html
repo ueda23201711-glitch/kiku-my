@@ -745,6 +745,7 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
                 </select>
             </div>
             <button class="btn-outline btn-block" onclick="testVoice()">🔊 この声で試す</button>
+            <div id="voice-diag" style="font-size:0.78rem; color:#7a5a20; margin-top:6px; line-height:1.5; white-space:pre-wrap;"></div>
             <div style="font-size:0.8rem; color:#888; margin-top:6px; line-height:1.5;">
                 より自然な声にするには、「設定」→「一般」→「アクセシビリティ」→「スピーチ」→「声」→「英語」で、「拡張」の声をダウンロードしてください。ダウンロード後にこのページを開き直すと一覧に出ます。
             </div>
@@ -2971,6 +2972,19 @@ document.addEventListener('visibilitychange', function () {
 window.addEventListener('pageshow', function () {
   aiFresh = true;
 });
+// Android（Chrome）は、読み上げを止めた（cancel）直後に読み上げを始めると、その声が捨てられて何もしゃべらないことがある。
+// そこで、しゃべっているときだけ止め、止めた時刻を覚えておいて、読み上げはその少しあとに始める
+var IS_ANDROID = /Android/i.test(navigator.userAgent);
+var ttsCancelAt = 0;
+function ttsCancel() {
+  if (!('speechSynthesis' in window)) return;
+  var sy = window.speechSynthesis;
+  if (IS_ANDROID && !sy.speaking && !sy.pending) return;
+  try {
+    sy.cancel();
+  } catch (e) {}
+  ttsCancelAt = Date.now();
+}
 function aiStop() {
   if (aiSrc) {
     try {
@@ -2989,7 +3003,7 @@ function sayAI(text, lang, cb) {
   var seq = ++speakSeq,
     voice = lang === 'ja' ? VPK_JA : VPK_EN,
     slang = lang === 'ja' ? 'ja-JP' : 'en-US';
-  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  ttsCancel();
   aiStop();
   // Web Audio が鳴らせないときは、ふつうの audio で鳴らす
   var viaEl = function viaEl() {
@@ -3080,7 +3094,7 @@ function stopAllAudio() {
   }
   speakSeq++; // 再生中の発話のコールバックを無効化
   aiStop();
-  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  ttsCancel();
 }
 function getStatus(n) {
   var key = k('stat_' + n);
@@ -3392,6 +3406,37 @@ function rankedVoices(lang) {
     return x.v;
   });
 }
+// 「🔊 この声で試す」のときに、声が出ない原因を調べて表示する（Android などで声が出ないとき用）
+function voiceDiag(uttr) {
+  var el = document.getElementById('voice-diag');
+  if (!el) return;
+  var vs = 'speechSynthesis' in window ? window.speechSynthesis.getVoices() : [];
+  var en = vs.filter(function (v) {
+      return /^en/i.test(v.lang);
+    }),
+    ja = vs.filter(function (v) {
+      return /^ja/i.test(v.lang);
+    });
+  var t0 = Date.now(),
+    log = [];
+  var base = !('speechSynthesis' in window) ? 'このブラウザーは読み上げに対応していません。Chrome で開いてください。' : '声の数：全部 ' + vs.length + '・英語 ' + en.length + '・日本語 ' + ja.length + (vs.length ? '' : '（0 のときは、端末の「設定 → テキスト読み上げ（音声出力）」で Google の音声エンジンを入れてください）');
+  el.textContent = base + '\n調べています…';
+  if (!uttr) return;
+  uttr.addEventListener('start', function () {
+    return log.push('開始 ' + (Date.now() - t0) + 'ms');
+  });
+  uttr.addEventListener('end', function () {
+    log.push('終了');
+    el.textContent = base + '\n' + log.join('・');
+  });
+  uttr.addEventListener('error', function (e) {
+    log.push('エラー：' + (e.error || '?'));
+    el.textContent = base + '\n' + log.join('・') + (e.error === 'not-allowed' ? '（画面をタップしてから、もう一度試してください）' : '');
+  });
+  setTimeout(function () {
+    if (!log.length) el.textContent = base + '\n3 秒たっても読み上げが始まりませんでした。端末の「テキスト読み上げ」の設定（エンジンと言語のデータ）を確かめてください。';
+  }, 3000);
+}
 function pickVoice(lang) {
   if (lang.toLowerCase().startsWith('en')) {
     var saved = function () {
@@ -3454,7 +3499,9 @@ function saveVoiceChoice() {
   } catch (e) {}
 }
 function testVoice() {
+  lastUttr = null;
   speak('The quarterly report has been submitted. accommodate', 'en-US');
+  voiceDiag(lastUttr);
 }
 
 // iOSは最初の発話がユーザー操作の中でないと音声が有効にならないため、最初のタップで空発話して解錠する
@@ -3475,6 +3522,7 @@ function unlockSpeech() {
   });
 });
 var speakSeq = 0;
+var lastUttr = null;
 function speak(text, lang, callback) {
   if (!('speechSynthesis' in window)) {
     if (callback) callback();
@@ -3495,6 +3543,7 @@ function speak(text, lang, callback) {
   uttr.rate = 1.0;
   uttr.onend = finish;
   uttr.onerror = finish;
+  lastUttr = uttr;
   var doSpeak = function doSpeak() {
     if (seq !== speakSeq) return;
     try {
@@ -3505,7 +3554,10 @@ function speak(text, lang, callback) {
   if (synth.speaking || synth.pending) {
     // iOS: cancel() 直後の speak() は捨てられることがあるので少し待つ
     synth.cancel();
-    setTimeout(doSpeak, 80);
+    ttsCancelAt = Date.now();
+    setTimeout(doSpeak, IS_ANDROID ? 250 : 80);
+  } else if (IS_ANDROID && Date.now() - ttsCancelAt < 250) {
+    setTimeout(doSpeak, 250 - (Date.now() - ttsCancelAt)); // Android：止めた直後は少し待つ
   } else {
     doSpeak();
   }

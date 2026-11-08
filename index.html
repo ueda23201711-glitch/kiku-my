@@ -647,6 +647,7 @@
                 </select>
             </div>
             <button class="btn-outline btn-block" onclick="testVoice()">🔊 この声で試す</button>
+            <div id="voice-diag" style="font-size:0.78rem; color:#7a5a20; margin-top:6px; line-height:1.5; white-space:pre-wrap;"></div>
             <div style="font-size:0.8rem; color:#888; margin-top:6px; line-height:1.5;">
                 より自然な声にするには、iPhoneの「設定」→「アクセシビリティ」→「読み上げコンテンツ」→「声」→「英語」で、「拡張」や「プレミアム」の声をダウンロードしてください。ダウンロード後にこのページを開き直すと一覧に出ます。
             </div>
@@ -1910,10 +1911,21 @@ document.addEventListener('mousedown', () => aiUnlock(), { passive: true, captur
 // ほかのアプリ（Claude など）に移って戻ってくると、iPhone では音の出口が止められたままになる → 次のタップで作り直す
 document.addEventListener('visibilitychange', () => { if (!document.hidden) aiFresh = true; });
 window.addEventListener('pageshow', () => { aiFresh = true; });
+// Android（Chrome）は、読み上げを止めた（cancel）直後に読み上げを始めると、その声が捨てられて何もしゃべらないことがある。
+// そこで、しゃべっているときだけ止め、止めた時刻を覚えておいて、読み上げはその少しあとに始める
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
+let ttsCancelAt = 0;
+function ttsCancel() {
+    if (!('speechSynthesis' in window)) return;
+    const sy = window.speechSynthesis;
+    if (IS_ANDROID && !sy.speaking && !sy.pending) return;
+    try { sy.cancel(); } catch (e) {}
+    ttsCancelAt = Date.now();
+}
 function aiStop() { if (aiSrc) { try { aiSrc.onended = null; aiSrc.stop(); } catch (e) {} aiSrc = null; } if (aiAudio) { try { aiAudio.pause(); } catch (e) {} } }
 function sayAI(text, lang, cb) {
     const seq = ++speakSeq, voice = lang === 'ja' ? VPK_JA : VPK_EN, slang = lang === 'ja' ? 'ja-JP' : 'en-US';
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    ttsCancel();
     aiStop();
     // Web Audio が鳴らせないときは、ふつうの audio で鳴らす
     const viaEl = () => vpkCacheGet(text, voice).then(buf => {
@@ -1957,7 +1969,7 @@ function stopAllAudio() {
     }
     speakSeq++; // 再生中の発話のコールバックを無効化
     aiStop();
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    ttsCancel();
 }
 
 function getStatus(n) {
@@ -2211,6 +2223,21 @@ function rankedVoices(lang) {
         .sort((a, b) => b.sc - a.sc)
         .map(x => x.v);
 }
+// 「🔊 この声で試す」のときに、声が出ない原因を調べて表示する（Android などで声が出ないとき用）
+function voiceDiag(uttr) {
+    const el = document.getElementById('voice-diag'); if (!el) return;
+    const vs = ('speechSynthesis' in window) ? window.speechSynthesis.getVoices() : [];
+    const en = vs.filter(v => /^en/i.test(v.lang)), ja = vs.filter(v => /^ja/i.test(v.lang));
+    const t0 = Date.now(), log = [];
+    const base = !('speechSynthesis' in window) ? 'このブラウザーは読み上げに対応していません。Chrome で開いてください。'
+        : '声の数：全部 ' + vs.length + '・英語 ' + en.length + '・日本語 ' + ja.length + (vs.length ? '' : '（0 のときは、端末の「設定 → テキスト読み上げ（音声出力）」で Google の音声エンジンを入れてください）');
+    el.textContent = base + '\n調べています…';
+    if (!uttr) return;
+    uttr.addEventListener('start', () => log.push('開始 ' + (Date.now() - t0) + 'ms'));
+    uttr.addEventListener('end', () => { log.push('終了'); el.textContent = base + '\n' + log.join('・'); });
+    uttr.addEventListener('error', (e) => { log.push('エラー：' + (e.error || '?')); el.textContent = base + '\n' + log.join('・') + (e.error === 'not-allowed' ? '（画面をタップしてから、もう一度試してください）' : ''); });
+    setTimeout(() => { if (!log.length) el.textContent = base + '\n3 秒たっても読み上げが始まりませんでした。端末の「テキスト読み上げ」の設定（エンジンと言語のデータ）を確かめてください。'; }, 3000);
+}
 function pickVoice(lang) {
     if (lang.toLowerCase().startsWith('en')) {
         const saved = (() => { try { return lsGet('voice_en') || ''; } catch (e) { return ''; } })();
@@ -2251,7 +2278,9 @@ function saveVoiceChoice() {
     try { lsSet('voice_en', sel.value); } catch (e) {}
 }
 function testVoice() {
+    lastUttr = null;
     speak('The quarterly report has been submitted. accommodate', 'en-US');
+    voiceDiag(lastUttr);
 }
 
 // iOSは最初の発話がユーザー操作の中でないと音声が有効にならないため、最初のタップで空発話して解錠する
@@ -2270,6 +2299,7 @@ function unlockSpeech() {
 );
 
 let speakSeq = 0;
+let lastUttr = null;
 function speak(text, lang, callback) {
     if (!('speechSynthesis' in window)) { if (callback) callback(); return; }
     const synth = window.speechSynthesis;
@@ -2288,6 +2318,7 @@ function speak(text, lang, callback) {
     uttr.rate = 1.0;
     uttr.onend = finish;
     uttr.onerror = finish;
+    lastUttr = uttr;
 
     const doSpeak = () => {
         if (seq !== speakSeq) return;
@@ -2297,8 +2328,10 @@ function speak(text, lang, callback) {
 
     if (synth.speaking || synth.pending) {
         // iOS: cancel() 直後の speak() は捨てられることがあるので少し待つ
-        synth.cancel();
-        setTimeout(doSpeak, 80);
+        synth.cancel(); ttsCancelAt = Date.now();
+        setTimeout(doSpeak, IS_ANDROID ? 250 : 80);
+    } else if (IS_ANDROID && Date.now() - ttsCancelAt < 250) {
+        setTimeout(doSpeak, 250 - (Date.now() - ttsCancelAt));   // Android：止めた直後は少し待つ
     } else {
         doSpeak();
     }
