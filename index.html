@@ -68,6 +68,10 @@
     }
     .word-text { font-size: 2.4rem; font-weight: 800; margin: 34px 0 6px 0; color: var(--primary); line-height: 1.1; word-break: break-word; cursor: pointer; }
     .meaning-text { font-size: 1.2rem; color: #333; margin-top: 8px; min-height: 1.5em; line-height: 1.4; font-weight: 500; }
+    .badge-res { position: absolute; top: 17px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 2px 9px; border-radius: 10px; font-size: 0.72rem; font-weight: bold; border: 1px solid transparent; }
+    .badge-res.known { background: #e6f4ea; color: #2d6a3e; border-color: #b9dcc3; }
+    .badge-res.unknown { background: #fdecea; color: #a8281e; border-color: #f2c1bc; }
+    .badge-res.new { background: #f1f3f4; color: #7a8288; border-color: #dfe3e6; }
     .badge { position: absolute; top: 15px; right: 15px; background: var(--primary); color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.8rem; }
     .btn-audio {
         position:absolute; top: 12px; left: 12px;
@@ -708,6 +712,7 @@
         <div class="flashcard" id="card-area" aria-label="flashcard">
             <div id="swipe-hint"></div>
             <div id="badge-lv" class="badge">LV.0</div>
+            <div id="badge-res" class="badge-res" title="このカードに前回つけた答え"></div>
             <button class="btn-audio" id="btn-audio" title="発音をもう一度" onclick="playWord(event)">🔊</button>
 
             <div id="txt-word" class="word-text" onclick="playWord(event)">Word</div>
@@ -1642,7 +1647,7 @@ function syncMerge(srv) {
         refreshMainStats(); renderReview();
         if (cur) {
             const st = getStatus(cur);
-            document.getElementById('badge-lv').innerText = 'LV.' + st.level;
+            document.getElementById('badge-lv').innerText = 'LV.' + st.level; resShow(st);
             document.querySelectorAll('.level-btn').forEach((btn, idx) => btn.classList.toggle('active', (idx + 1 == st.level)));
         }
         if (document.getElementById('screen-list').classList.contains('active')) renderListTable();
@@ -2200,6 +2205,7 @@ function renderCard() {
     document.getElementById('btn-show-meaning').classList.remove('hidden');
 
     document.getElementById('badge-lv').innerText = `LV.${status.level}`;
+    resShow(status);
     document.querySelectorAll('.level-btn').forEach((btn, idx) => {
         btn.classList.toggle('active', (idx + 1 == status.level));
     });
@@ -2576,12 +2582,20 @@ function renderReview() {
     btn.disabled = !n;
     document.getElementById('review-note').textContent = n ? '' : nextReviewText();
 }
+// このカードに前回つけた答え（わかる／わからない／まだ答えていない）
+function resShow(st) {
+    const el = document.getElementById('badge-res'); if (!el) return;
+    const r = st && st.result === 'known' ? 'known' : st && st.result === 'unknown' ? 'unknown' : 'new';
+    el.className = 'badge-res ' + r;
+    el.innerText = r === 'known' ? '✓ わかる' : r === 'unknown' ? '✗ わからない' : '— まだ';
+}
 function answer(isKnown) {
     const item = studyQueue[currentIndex];
     const st = getStatus(item.n);
     st.result = isKnown ? 'known' : 'unknown';
     srsSchedule(st, isKnown);
     saveStatus(item.n, st);
+    resShow(st);
     showSwipeHint(isKnown ? "わかる" : "わからない");
     setTimeout(() => manualMove(1), 200);
 }
