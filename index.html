@@ -714,7 +714,7 @@
             <div id="txt-meaning" class="meaning-text hidden">意味</div>
             <div id="txt-src" style="font-size:0.8rem; color:#999; margin-top:6px;"></div>
             <div id="txt-diff" class="diff-chip" style="display:none" onclick="diffExplain(event)" title="この単語の難しさの目安（使われる頻度から）"></div>
-            <button id="btn-edit-meaning" class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="editMeaning(null, event)" title="この単語の日本語訳を書き換える">✎ 訳を直す</button>
+            <div style="flex-shrink:0; text-align:center;"><button id="btn-edit-meaning" class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="editMeaning(null, event)" title="この単語の日本語訳を書き換える">✎ 訳を直す</button> <button class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="editWord(null, event)" title="英単語のつづりを直す（覚えた度合い・メモはそのまま）">✎ 単語を直す</button></div>
 
             <button id="btn-show-meaning" class="btn-neutral" style="margin-top:10px; font-size:0.85rem; padding:8px 18px; border-radius:20px;" onclick="revealMeaning()">
                 日本語訳を表示
@@ -3204,7 +3204,7 @@ function renderListTable() {
         tr.id = 'lr-' + item.n;
         listShown.push(item.n);
         tr.innerHTML = `<td><input type="checkbox" ${listSel[item.n] ? 'checked' : ''} onclick="selOne(${item.n}, this.checked, event)" style="width:20px; height:20px;"></td><td>${item.n}</td>
-            <td><div style="font-weight:bold; color:var(--primary)"><span class="lw" onclick="listToCard(${item.n})" style="cursor:pointer" title="このカードを開く">${item.w}</span> <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="editMeaning(${item.n}, event)" title="日本語訳を書き換える">✎ 訳</button></div><div class="lm" style="font-size:0.8em; color:#666">${String(item.m).replace(/[<>&]/g, '')}</div>${item.s && !grouped ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
+            <td><div style="font-weight:bold; color:var(--primary)"><span class="lw" onclick="listToCard(${item.n})" style="cursor:pointer" title="このカードを開く">${item.w}</span> <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="editMeaning(${item.n}, event)" title="日本語訳を書き換える">✎ 訳</button> <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="editWord(${item.n}, event)" title="英単語のつづりを直す">✎ 単語</button></div><div class="lm" style="font-size:0.8em; color:#666">${String(item.m).replace(/[<>&]/g, '')}</div>${item.s && !grouped ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
             <td style="text-align:center"><select onchange="updateLv(${item.n}, this.value)">
                 ${[0,1,2,3,4,5].map(v => `<option value="${v}" ${st.level==v?'selected':''}>${v}</option>`).join('')}
             </select></td>`;
@@ -3235,6 +3235,46 @@ document.addEventListener('keydown', function (e) {
 
 // 日本語訳を書き換える（n：番号。null なら今のカード）。
 // クラウドの最新の単語データに対して直す（英文リーダーで足した単語を消さないため）
+// 英単語のつづりを直す（例：rated が rat で入ってしまった）。番号はそのままなので、覚えた度合い・メモ・元の英文は引き継ぐ
+function editWord(n, e) {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    if (n === null || n === undefined) { const cur = studyQueue && studyQueue[currentIndex]; if (!cur) return; n = cur.n; }
+    const item = words.find(x => x.n === Number(n)); if (!item) return;
+    const v = prompt('英単語を直してください（覚えた度合いやメモはそのまま残ります）', item.w);
+    if (v === null) return;
+    const nw = v.replace(/[\t\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!nw || nw === item.w) return;
+    const dup = words.find(x => x.n !== item.n && String(x.w).toLowerCase() === nw.toLowerCase());
+    if (dup && !confirm('「' + nw + '」はもう登録されています（No.' + dup.n + '）。それでも直しますか？')) return;
+    // 訳も新しい単語の辞書の訳にするか聞く
+    dictLookup(nw, m0 => {
+        let nm = null;
+        if (m0 && m0 !== item.m && confirm('訳も新しい単語の訳にしますか？\n\n新しい訳：' + m0 + '\n今の訳：' + item.m + '\n\n（「キャンセル」で今の訳のまま。あとで「✎ 訳を直す」でも直せます）')) nm = m0;
+        const patch = (tsv) => {
+            const lines = String(tsv || '').replace(/\s+$/, '').split('\n'); let hit = false;
+            for (let i = 0; i < lines.length; i++) { const p = lines[i].split('\t'); if (p.length >= 3 && parseInt(p[2], 10) === Number(n)) { p[0] = nw; if (nm) p[1] = nm; lines[i] = p.join('\t'); hit = true; } }
+            return hit ? lines.join('\n') : null;
+        };
+        const finish = (tsv) => {
+            if (!tsv) { alert('その単語が見つかりませんでした。'); return; }
+            tsvUndoPush('単語の修正');
+            masterTsv = tsv; lsSet('master_tsv', masterTsv);
+            document.getElementById('data-editor').value = masterTsv.trim();
+            parseData();
+            if (studyQueue) studyQueue.forEach(q => { if (q.n === Number(n)) { q.w = nw; if (nm) q.m = nm; } });
+            try { aiPrep(nw, VPK_EN); if (nm) aiPrep(shortMean(nm), VPK_JA); } catch (er) {}
+            const cur = studyQueue && studyQueue[currentIndex];
+            if (cur && cur.n === Number(n)) { document.getElementById('txt-word').innerText = nw; if (nm) document.getElementById('txt-meaning').innerText = nm; try { diffShow(nw); } catch (er) {} }
+            if (document.getElementById('screen-list').classList.contains('active')) renderListTable();
+            if (cloudKey()) cloudPush(function (err) { if (err) alert('端末には保存しましたが、クラウドへの保存に失敗しました（' + cloudErrText(err) + '）。'); });
+        };
+        const key = cloudKey();
+        if (!key) { finish(patch(masterTsv)); return; }
+        cloudReq('GET', '/memos/' + key + '/' + CLOUD_NODE + '/words', undefined, function (err, w) {
+            finish(patch(!err && typeof w === 'string' && w.trim() ? w : masterTsv));
+        });
+    });
+}
 function editMeaning(n, e) {
     if (e) { e.stopPropagation(); e.preventDefault(); }
     if (n === null || n === undefined) { const cur = studyQueue && studyQueue[currentIndex]; if (!cur) return; n = cur.n; }
@@ -3303,8 +3343,10 @@ function lemmasK(w) {
     if (/(ches|shes|sses|xes|zes|oes)$/.test(w)) add(w.slice(0, -2));
     if (/s$/.test(w) && !/ss$/.test(w)) add(w.slice(0, -1));
     if (/ied$/.test(w)) add(w.slice(0, -3) + 'y');
-    if (/ed$/.test(w)) { add(w.slice(0, -2)); add(w.slice(0, -1)); if (/([b-df-hj-np-tv-z])\1ed$/.test(w)) add(w.slice(0, -3)); }
-    if (/ing$/.test(w)) { add(w.slice(0, -3)); add(w.slice(0, -3) + 'e'); if (/([b-df-hj-np-tv-z])\1ing$/.test(w)) add(w.slice(0, -4)); }
+    // rated → rate（rat ではない）：1音節で「母音1つ＋子音1つ」で終わる語は -ed/-ing で子音を重ねるので、重ねていなければ e で終わる語を先に
+    const cvc1 = x => /^[^aeiouy]*[aeiouy][b-df-hj-np-tvz]$/.test(x);
+    if (/ed$/.test(w)) { if (cvc1(w.slice(0, -2))) add(w.slice(0, -1)); add(w.slice(0, -2)); add(w.slice(0, -1)); if (/([b-df-hj-np-tv-z])\1ed$/.test(w)) add(w.slice(0, -3)); }
+    if (/ing$/.test(w)) { if (cvc1(w.slice(0, -3))) add(w.slice(0, -3) + 'e'); add(w.slice(0, -3)); add(w.slice(0, -3) + 'e'); if (/([b-df-hj-np-tv-z])\1ing$/.test(w)) add(w.slice(0, -4)); }
     if (/ly$/.test(w)) add(w.slice(0, -2));
     return out;
 }
