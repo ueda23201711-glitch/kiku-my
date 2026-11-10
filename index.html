@@ -3255,6 +3255,7 @@ function editMeaning(n, e) {
         document.getElementById('data-editor').value = masterTsv.trim();
         parseData();
         if (studyQueue) studyQueue.forEach(q => { if (q.n === Number(n)) q.m = nm; });
+        try { aiPrep(shortMean(nm), VPK_JA); } catch (e) {}   // 新しい訳の AI の声を先に作っておく（声は訳の文字ごとなので、直した訳の声が自動で使われる）
         const cur = studyQueue && studyQueue[currentIndex];
         if (cur && cur.n === Number(n)) document.getElementById('txt-meaning').innerText = nm;
         if (document.getElementById('screen-list').classList.contains('active')) renderListTable();
