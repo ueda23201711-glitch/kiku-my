@@ -629,8 +629,8 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
     .controls > * { width: calc(50% - 5px); }
     .flex-gap-5 > * + * { margin-left: 5px; }
     [data-gap="5r"] > * + * { margin-left: 5px; } [data-gap="5r"] > * { margin-bottom: 5px; }
-[data-gap="8r"] > * + * { margin-left: 8px; } [data-gap="8r"] > * { margin-bottom: 6px; }
 [data-gap="6r"] > * + * { margin-left: 6px; } [data-gap="6r"] > * { margin-bottom: 6px; }
+[data-gap="8r"] > * + * { margin-left: 8px; } [data-gap="8r"] > * { margin-bottom: 6px; }
 </style>
 
 <link rel="manifest" href="./app-v2.webmanifest">
@@ -880,10 +880,10 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
             <p id="listen-status-label" style="color:var(--primary); font-weight:bold; font-size:0.9rem; margin:8px 0;">AUTO PLAYING...</p>
             <button class="btn-neutral btn-block" onclick="togglePause()" id="btn-pause">一時停止</button>
             <button class="btn-primary btn-block" style="margin-top:8px" onclick="vpkStart()" id="btn-vpk">🎧 ポケットで聞く（画面を消しても流れる）</button>
-            <div id="vpk-tempo" style="margin-top:6px; font-size:0.82rem; color:#666;">テンポ：
-                <button type="button" class="tool-btn" data-t="slow" onclick="vpkTempoSet('slow')" style="padding:3px 10px;">ゆっくり</button>
-                <button type="button" class="tool-btn" data-t="normal" onclick="vpkTempoSet('normal')" style="padding:3px 10px;">ふつう</button>
-                <button type="button" class="tool-btn" data-t="fast" onclick="vpkTempoSet('fast')" style="padding:3px 10px;">はやい</button>
+            <div id="vpk-tempo" data-gap="6r" style="margin-top:8px; font-size:0.82rem; color:#666; display:flex; align-items:center;  flex-wrap:nowrap; white-space:nowrap;"><span style="flex-shrink:0;">テンポ：</span>
+                <button type="button" class="tool-btn" data-t="slow" onclick="vpkTempoSet('slow')" style="padding:4px 6px; flex:1; min-width:0; font-size:0.85rem; text-align:center; justify-content:center;">ゆっくり</button>
+                <button type="button" class="tool-btn" data-t="normal" onclick="vpkTempoSet('normal')" style="padding:4px 6px; flex:1; min-width:0; font-size:0.85rem; text-align:center; justify-content:center;">ふつう</button>
+                <button type="button" class="tool-btn" data-t="fast" onclick="vpkTempoSet('fast')" style="padding:4px 6px; flex:1; min-width:0; font-size:0.85rem; text-align:center; justify-content:center;">はやい</button>
             </div>
             <div id="vpk-msg" style="font-size:0.82rem; color:#666; margin-top:6px; line-height:1.5;"></div>
         </div>
