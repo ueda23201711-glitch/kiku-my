@@ -714,7 +714,7 @@
             <div id="txt-meaning" class="meaning-text hidden">意味</div>
             <div id="txt-src" style="font-size:0.8rem; color:#999; margin-top:6px;"></div>
             <div id="txt-diff" class="diff-chip" style="display:none" onclick="diffExplain(event)" title="この単語の難しさの目安（使われる頻度から）"></div>
-            <div style="flex-shrink:0; text-align:center;"><button id="btn-edit-meaning" class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="editMeaning(null, event)" title="この単語の日本語訳を書き換える">✎ 訳を直す</button> <button class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="editWord(null, event)" title="英単語のつづりを直す（覚えた度合い・メモはそのまま）">✎ 単語を直す</button></div>
+            <div style="flex-shrink:0; text-align:center;"><button id="btn-edit-meaning" class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="editMeaning(null, event)" title="この単語の日本語訳を書き換える">✎ 訳を直す</button> <button class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="editWord(null, event)" title="英単語のつづりを直す（覚えた度合い・メモはそのまま）">✎ 単語を直す</button> <button class="tool-btn" style="margin-top:6px; padding:3px 10px; font-size:0.78rem" onclick="deleteWord(null, event)" title="このカード（単語）を単語帳から消す">🗑 カードを消す</button></div>
 
             <button id="btn-show-meaning" class="btn-neutral" style="margin-top:10px; font-size:0.85rem; padding:8px 18px; border-radius:20px;" onclick="revealMeaning()">
                 日本語訳を表示
@@ -3204,7 +3204,7 @@ function renderListTable() {
         tr.id = 'lr-' + item.n;
         listShown.push(item.n);
         tr.innerHTML = `<td><input type="checkbox" ${listSel[item.n] ? 'checked' : ''} onclick="selOne(${item.n}, this.checked, event)" style="width:20px; height:20px;"></td><td>${item.n}</td>
-            <td><div style="font-weight:bold; color:var(--primary)"><span class="lw" onclick="listToCard(${item.n})" style="cursor:pointer" title="このカードを開く">${item.w}</span> <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="editMeaning(${item.n}, event)" title="日本語訳を書き換える">✎ 訳</button> <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="editWord(${item.n}, event)" title="英単語のつづりを直す">✎ 単語</button></div><div class="lm" style="font-size:0.8em; color:#666">${String(item.m).replace(/[<>&]/g, '')}</div>${item.s && !grouped ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
+            <td><div style="font-weight:bold; color:var(--primary)"><span class="lw" onclick="listToCard(${item.n})" style="cursor:pointer" title="このカードを開く">${item.w}</span> <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="editMeaning(${item.n}, event)" title="日本語訳を書き換える">✎ 訳</button> <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="editWord(${item.n}, event)" title="英単語のつづりを直す">✎ 単語</button> <button class="tool-btn" style="padding:1px 7px; font-size:0.75rem; font-weight:normal" onclick="deleteWord(${item.n}, event)" title="この単語を単語帳から消す">🗑</button></div><div class="lm" style="font-size:0.8em; color:#666">${String(item.m).replace(/[<>&]/g, '')}</div>${item.s && !grouped ? `<div style="font-size:0.75em; color:#999">📚 ${item.s.replace(/[<>&]/g, '')}</div>` : ''}</td>
             <td style="text-align:center"><select onchange="updateLv(${item.n}, this.value)">
                 ${[0,1,2,3,4,5].map(v => `<option value="${v}" ${st.level==v?'selected':''}>${v}</option>`).join('')}
             </select></td>`;
@@ -3235,6 +3235,44 @@ document.addEventListener('keydown', function (e) {
 
 // 日本語訳を書き換える（n：番号。null なら今のカード）。
 // クラウドの最新の単語データに対して直す（英文リーダーで足した単語を消さないため）
+// カード（単語）を単語帳から消す。消したものは「📦 控えから単語を戻す」で戻せる（控えには残る）
+function deleteWord(n, e) {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    if (n === null || n === undefined) { const cur = studyQueue && studyQueue[currentIndex]; if (!cur) return; n = cur.n; }
+    const item = words.find(x => x.n === Number(n)); if (!item) return;
+    if (!confirm('「' + item.w + '」（No.' + item.n + '）のカードを消しますか？\n訳：' + String(item.m).slice(0, 40) + '\n\n（まちがって消しても、合言葉の欄の「📦 控えから単語を戻す」で戻せます）')) return;
+    const patch = (tsv) => {
+        const lines = String(tsv || '').replace(/\s+$/, '').split('\n'); let hit = false;
+        const out = lines.filter(l => { const p = l.split('\t'); if (p.length >= 3 && parseInt(p[2], 10) === Number(n)) { hit = true; return false; } return true; });
+        return hit ? out.join('\n') : null;
+    };
+    const finish = (tsv) => {
+        if (!tsv) { alert('その単語が見つかりませんでした。'); return; }
+        tsvUndoPush('カードの削除');
+        masterTsv = tsv; lsSet('master_tsv', masterTsv);
+        document.getElementById('data-editor').value = masterTsv.trim();
+        parseData();
+        try { saveStatus(Number(n), { level: 0, result: 'new' }); } catch (er) {}   // 同じ番号が後で使われても、前の覚えた度合いが残らないように
+        // 学習中ならそのカードを抜いて、次のカードへ
+        if (studyQueue && studyQueue.length) {
+            const was = studyQueue[currentIndex] && studyQueue[currentIndex].n === Number(n);
+            const before = studyQueue.slice(0, currentIndex).filter(q => q.n === Number(n)).length;
+            studyQueue = studyQueue.filter(q => q.n !== Number(n));
+            currentIndex -= before;
+            if (document.getElementById('screen-study').classList.contains('active')) {
+                if (!studyQueue.length) { alert('この範囲のカードがなくなりました。'); goHome(); }
+                else { if (currentIndex >= studyQueue.length) currentIndex = studyQueue.length - 1; if (was) { stopAllAudio(); renderCard(); } }
+            }
+        }
+        if (document.getElementById('screen-list').classList.contains('active')) renderListTable();
+        if (cloudKey()) cloudPushNow(function (err) { if (err) alert('端末では消しましたが、クラウドへの保存に失敗しました（' + cloudErrText(err) + '）。'); });
+    };
+    const key = cloudKey();
+    if (!key) { finish(patch(masterTsv)); return; }
+    cloudReq('GET', '/memos/' + key + '/' + CLOUD_NODE + '/words', undefined, function (err, w) {
+        finish(patch(!err && typeof w === 'string' && w.trim() ? w : masterTsv));
+    });
+}
 // 英単語のつづりを直す（例：rated が rat で入ってしまった）。番号はそのままなので、覚えた度合い・メモ・元の英文は引き継ぐ
 function editWord(n, e) {
     if (e) { e.stopPropagation(); e.preventDefault(); }
@@ -3266,7 +3304,7 @@ function editWord(n, e) {
             const cur = studyQueue && studyQueue[currentIndex];
             if (cur && cur.n === Number(n)) { document.getElementById('txt-word').innerText = nw; if (nm) document.getElementById('txt-meaning').innerText = nm; try { diffShow(nw); } catch (er) {} }
             if (document.getElementById('screen-list').classList.contains('active')) renderListTable();
-            if (cloudKey()) cloudPush(function (err) { if (err) alert('端末には保存しましたが、クラウドへの保存に失敗しました（' + cloudErrText(err) + '）。'); });
+            if (cloudKey()) cloudPushNow(function (err) { if (err) alert('端末には保存しましたが、クラウドへの保存に失敗しました（' + cloudErrText(err) + '）。'); });
         };
         const key = cloudKey();
         if (!key) { finish(patch(masterTsv)); return; }
@@ -3299,7 +3337,7 @@ function editMeaning(n, e) {
         const cur = studyQueue && studyQueue[currentIndex];
         if (cur && cur.n === Number(n)) document.getElementById('txt-meaning').innerText = nm;
         if (document.getElementById('screen-list').classList.contains('active')) renderListTable();
-        if (cloudKey()) cloudPush(function (err) { if (err) alert('端末には保存しましたが、クラウドへの保存に失敗しました（' + cloudErrText(err) + '）。'); });
+        if (cloudKey()) cloudPushNow(function (err) { if (err) alert('端末には保存しましたが、クラウドへの保存に失敗しました（' + cloudErrText(err) + '）。'); });
     };
     const key = cloudKey();
     if (!key) { finish(patch(masterTsv)); return; }
