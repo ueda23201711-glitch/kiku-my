@@ -880,6 +880,11 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
             <p id="listen-status-label" style="color:var(--primary); font-weight:bold; font-size:0.9rem; margin:8px 0;">AUTO PLAYING...</p>
             <button class="btn-neutral btn-block" onclick="togglePause()" id="btn-pause">一時停止</button>
             <button class="btn-primary btn-block" style="margin-top:8px" onclick="vpkStart()" id="btn-vpk">🎧 ポケットで聞く（画面を消しても流れる）</button>
+            <div id="vpk-tempo" style="margin-top:6px; font-size:0.82rem; color:#666;">テンポ：
+                <button type="button" class="tool-btn" data-t="slow" onclick="vpkTempoSet('slow')" style="padding:3px 10px;">ゆっくり</button>
+                <button type="button" class="tool-btn" data-t="normal" onclick="vpkTempoSet('normal')" style="padding:3px 10px;">ふつう</button>
+                <button type="button" class="tool-btn" data-t="fast" onclick="vpkTempoSet('fast')" style="padding:3px 10px;">はやい</button>
+            </div>
             <div id="vpk-msg" style="font-size:0.82rem; color:#666; margin-top:6px; line-height:1.5;"></div>
         </div>
     </div>
@@ -2774,6 +2779,46 @@ function vpkWav(parts) {
     type: 'audio/wav'
   });
 }
+// ポケットで聞く：英語→訳、訳→次の単語 のあいだ（秒）。テンポは選べる（この端末に覚える）
+var VPK_TEMPO = {
+  slow: [0.6, 1.2],
+  normal: [0.25, 0.6],
+  fast: [0.1, 0.35]
+};
+function vpkTempo() {
+  var t = lsGet('vpk_tempo');
+  return VPK_TEMPO[t] ? t : 'normal';
+}
+function vpkGaps() {
+  return VPK_TEMPO[vpkTempo()];
+}
+function vpkTempoSet(t) {
+  if (!VPK_TEMPO[t]) return;
+  lsSet('vpk_tempo', t);
+  vpkTempoUi();
+  if (vpk) {
+    vpkStop();
+    vpkStart();
+  } // 聞いている途中なら、今の単語から新しいテンポで流し直す
+}
+function vpkTempoUi() {
+  document.querySelectorAll('#vpk-tempo button').forEach(function (b) {
+    b.className = 'tool-btn' + (b.dataset.t === vpkTempo() ? ' active' : '');
+  });
+}
+// AI の声の前後の無音を切る（つないだときに間延びしないように）
+function vpkCut(pcm) {
+  var th = 0.01,
+    pad0 = Math.round(VPK_RATE * 0.02),
+    pad1 = Math.round(VPK_RATE * 0.06);
+  var a = 0,
+    b = pcm.length - 1;
+  while (a < pcm.length && Math.abs(pcm[a]) < th) a++;
+  while (b > a && Math.abs(pcm[b]) < th) b--;
+  a = Math.max(0, a - pad0);
+  b = Math.min(pcm.length, b + pad1);
+  return b - a < 200 ? pcm : pcm.subarray(a, b);
+}
 function vpkMsg(t) {
   var el = document.getElementById('vpk-msg');
   if (el) el.textContent = t;
@@ -2814,7 +2859,7 @@ function vpkStart() {
 }
 function _vpkStart() {
   _vpkStart = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2() {
-    var _pr, list, my, startIdx, silence, parts, times, T, fail, done, local, got, next, worker, i, en, ja, a1, a2, pcm, pcm2, url, au, jump, pr, b, _t;
+    var _pr, list, my, startIdx, silence, parts, times, T, fail, done, local, got, next, worker, gp, i, en, ja, a1, a2, pcm, pcm2, url, au, jump, pr, b, _t;
     return _regenerator().w(function (_context2) {
       while (1) switch (_context2.n) {
         case 0:
@@ -2892,7 +2937,7 @@ function _vpkStart() {
                       ja: ja.b
                     };
                     done++;
-                    vpkMsg('🎧 声を用意しています… ' + done + ' / ' + list.length + '（この端末にあった声 ' + local + ' 語。ない声は AI が作ります）');
+                    vpkMsg(local === done ? '🎧 この端末にある声をつないでいます… ' + done + ' / ' + list.length + '（画面を消しても流れるよう、1 本の音にまとめます）' : '🎧 声を用意しています… ' + done + ' / ' + list.length + '（この端末にあった声 ' + local + ' 語。ない声は AI が作ります）');
                     _context.n = 0;
                     break;
                   case 3:
@@ -2904,7 +2949,8 @@ function _vpkStart() {
               return _ref.apply(this, arguments);
             };
           }();
-          vpkMsg('🎧 声を用意しています…');
+          vpkMsg('🎧 声をつないでいます…');
+          gp = vpkGaps();
           _context2.n = 5;
           return Promise.all([worker(), worker(), worker(), worker()]);
         case 5:
@@ -2948,19 +2994,19 @@ function _vpkStart() {
           a2 = _t;
           times.push(T);
           if (a1) {
-            pcm = vpkPcm(a1);
+            pcm = vpkCut(vpkPcm(a1));
             parts.push(pcm);
             T += pcm.length / VPK_RATE;
           }
-          parts.push(silence(0.6));
-          T += 0.6;
+          parts.push(silence(gp[0]));
+          T += gp[0];
           if (a2) {
-            pcm2 = vpkPcm(a2);
+            pcm2 = vpkCut(vpkPcm(a2));
             parts.push(pcm2);
             T += pcm2.length / VPK_RATE;
           }
-          parts.push(silence(1.2));
-          T += 1.2;
+          parts.push(silence(gp[1]));
+          T += gp[1];
         case 13:
           i++;
           _context2.n = 6;
@@ -3415,6 +3461,7 @@ function startApp(mode, startAtN) {
   isPaused = false;
   document.getElementById('controls-card').className = isListeningMode ? 'hidden' : '';
   document.getElementById('controls-listen').className = isListeningMode ? '' : 'hidden text-center';
+  if (isListeningMode) vpkTempoUi();
   showScreen('screen-study');
   renderCard();
 }
