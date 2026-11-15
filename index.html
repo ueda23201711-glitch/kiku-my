@@ -25,6 +25,15 @@
         overflow: hidden; 
     }
     .hidden { display: none !important; }
+    .ls-row { display: flex; gap: 6px; margin-top: 8px; }
+    .ls-row button { flex: 1 1 0; min-width: 0; padding: 12px 4px; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* 聞き流しのときは、カードを上に詰める（上の空きは、フラッシュカードを片手でスワイプしやすくするためのもの） */
+    #screen-study.listening { padding-top: 8px !important; }
+    @media (max-width: 480px) {   /* 上の「11 / 100」と 3 つのボタンを 1 行に */
+        #screen-study > div:first-child { flex-wrap: nowrap; gap: 4px; }
+        #screen-study > div:first-child #progress-text { white-space: nowrap; font-size: 0.78rem; }
+        #screen-study > div:first-child button { padding: 4px 7px !important; font-size: 0.72rem !important; white-space: nowrap; }
+    }
     .screen { 
         display: none; 
         flex-direction: column; 
@@ -782,10 +791,13 @@
 
         <!-- Listening Mode Controls -->
         <div id="controls-listen" class="hidden text-center">
-            <p id="listen-status-label" style="color:var(--primary); font-weight:bold; font-size:0.9rem; margin:8px 0;">AUTO PLAYING...</p>
-            <button class="btn-neutral btn-block" onclick="togglePause()" id="btn-pause">一時停止</button>
-            <button class="btn-primary btn-block" style="margin-top:8px" onclick="vpkStart()" id="btn-vpk">🎧 ポケットで聞く（画面を消しても流れる）</button>
-            <div style="margin-top:8px;"><button type="button" id="ls-loop" class="tool-btn" onclick="listenLoopSet()" style="padding:5px 12px; font-size:0.85rem;" title="最後の単語まで行ったら、最初の単語に戻ってくり返す（聞き流し・ポケットで聞く）">🔁 くり返す</button></div>
+            <p id="listen-status-label" class="hidden">AUTO PLAYING...</p>
+            <!-- 再開・ポケットで聞く・くり返す を横 1 列に（その分、カードを広く） -->
+            <div class="ls-row">
+                <button class="btn-neutral" onclick="togglePause()" id="btn-pause">⏸ 一時停止</button>
+                <button class="btn-primary" onclick="vpkStart()" id="btn-vpk" title="画面を消しても流れる">🎧 ポケット</button>
+                <button type="button" id="ls-loop" class="btn-neutral" onclick="listenLoopSet()" title="最後の単語まで行ったら、最初の単語に戻ってくり返す（聞き流し・ポケットで聞く）">🔁 繰返</button>
+            </div>
             <div id="vpk-tempo" style="margin-top:8px; font-size:0.82rem; color:#666; display:flex; align-items:center; gap:6px; flex-wrap:nowrap; white-space:nowrap;"><span style="flex-shrink:0;">テンポ：</span>
                 <button type="button" class="tool-btn" data-t="slow" onclick="vpkTempoSet('slow')" style="padding:4px 6px; flex:1; min-width:0; font-size:0.85rem; text-align:center; justify-content:center;">ゆっくり</button>
                 <button type="button" class="tool-btn" data-t="normal" onclick="vpkTempoSet('normal')" style="padding:4px 6px; flex:1; min-width:0; font-size:0.85rem; text-align:center; justify-content:center;">ふつう</button>
@@ -1941,7 +1953,7 @@ function listenLoopSet() {
     if (vpk) { vpkStop(); vpkStart(); }   // ポケットで聞いている途中なら、いまの単語から流し直す
 }
 function vpkTempoUi() {
-    const lb = document.getElementById('ls-loop'); if (lb) { lb.className = 'tool-btn' + (listenLoop() ? ' active' : ''); lb.textContent = listenLoop() ? '🔁 くり返す：オン' : '🔁 くり返す'; } document.querySelectorAll('#vpk-tempo button').forEach(b => { b.className = 'tool-btn' + (b.dataset.t === vpkTempo() ? ' active' : ''); }); }
+    const lb = document.getElementById('ls-loop'); if (lb) { lb.className = listenLoop() ? 'btn-primary' : 'btn-neutral'; lb.textContent = listenLoop() ? '🔁 繰返：オン' : '🔁 繰返'; } document.querySelectorAll('#vpk-tempo button').forEach(b => { b.className = 'tool-btn' + (b.dataset.t === vpkTempo() ? ' active' : ''); }); }
 // AI の声の前後の無音を切る（つないだときに間延びしないように）
 function vpkCut(pcm) {
     const th = 0.01, pad0 = Math.round(VPK_RATE * 0.02), pad1 = Math.round(VPK_RATE * 0.06); let a = 0, b = pcm.length - 1;
@@ -1957,7 +1969,7 @@ function vpkStop() {
     // iPhone：聞き流しの「再生中の音」を手放す（そのままだと、あとのフラッシュカードの声が出なくなることがある）
     if ('mediaSession' in navigator) { try { ['play', 'pause', 'nexttrack', 'previoustrack'].forEach(a => navigator.mediaSession.setActionHandler(a, null)); navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none'; } catch (e) {} }
     aiFresh = true;
-    vpk = null; vpkGen++; const b = document.getElementById('btn-vpk'); if (b) b.textContent = '🎧 ポケットで聞く（画面を消しても流れる）'; }
+    vpk = null; vpkGen++; const b = document.getElementById('btn-vpk'); if (b) b.textContent = '🎧 ポケット'; }
 async function vpkStart() {
     if (vpk) { vpkStop(); vpkMsg('ポケットで聞くのをやめました。'); return; }
     await gasEnsure();
@@ -2025,7 +2037,7 @@ async function vpkStart() {
         } catch (e) {}
     }
     const pr = au.play(); if (pr && pr.catch) pr.catch(() => vpkMsg('🎧 準備できました。もう一度ボタンを押してください。'));
-    const b = document.getElementById('btn-vpk'); if (b) b.textContent = '■ ポケットで聞くのをやめる';
+    const b = document.getElementById('btn-vpk'); if (b) b.textContent = '■ ポケット停止';
     vpkMsg('🎧 ' + list.length + ' 語を流しています' + (loopOn ? '（🔁 くり返し）' : '') + '。画面を消して、ポケットに入れても大丈夫です。');
 }
 function revealMeaningSilent() { const el = document.getElementById('txt-meaning'), btn = document.getElementById('btn-show-meaning'); if (el) el.classList.remove('hidden'); if (btn) btn.classList.add('hidden'); }
@@ -2222,6 +2234,7 @@ function startApp(mode, startAtN) {
         if (idx > 0) currentIndex = idx;
     }
     isListeningMode = (mode === 'listen');
+    document.getElementById('screen-study').classList.toggle('listening', isListeningMode);
     isPaused = false;
     document.getElementById('controls-card').className = isListeningMode ? 'hidden' : '';
     document.getElementById('controls-listen').className = isListeningMode ? '' : 'hidden text-center';
@@ -2675,11 +2688,11 @@ function togglePause() {
     const btn = document.getElementById('btn-pause');
     const label = document.getElementById('listen-status-label');
     if (isPaused) {
-        btn.innerText = "再開";
+        btn.innerText = "▶ 再開";
         label.innerText = "PAUSED";
         stopAllAudio();
     } else {
-        btn.innerText = "一時停止";
+        btn.innerText = "⏸ 一時停止";
         label.innerText = "AUTO PLAYING...";
         renderCard();
     }
