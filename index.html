@@ -860,6 +860,7 @@
     <div style="position:absolute; left:50%; top:45%; width:240px; height:240px; margin:-120px 0 0 -120px; border:3px solid rgba(255,255,255,.9); border-radius:18px; box-shadow:0 0 0 2000px rgba(0,0,0,.45);"></div>
     <div style="position:absolute; left:0; right:0; bottom:0; padding:20px 20px 34px; text-align:center; color:#fff;">
         <p id="cloud-scan-msg" style="margin:0 0 14px; line-height:1.6;">英文リーダーの合言葉のQRコードを枠に合わせてください</p>
+        <label style="display:inline-block; margin-right:10px; padding:12px 18px; border-radius:10px; background:rgba(255,255,255,.18); color:#fff; font-weight:bold; cursor:pointer;">📷 写真で読む<input type="file" accept="image/*" capture="environment" style="display:none" onchange="cloudScanPhoto(this)"></label>
         <button onclick="cloudStopScan()" style="background:#fff; color:#222; padding:12px 28px;">やめる</button>
     </div>
 </div>
@@ -1500,6 +1501,47 @@ function cloudScanLoop() {
     }
     next();
 }
+// iPhone（とくに古い機種）で、カメラを許可しても真っ黒のままのことがある：映像が来なければ開き直す（2 回まで）。だめなら「📷 写真で読む」
+function cloudScanMsg(t) { document.getElementById('cloud-scan-msg').textContent = t; }
+function cloudScanWatch(tries) {
+    setTimeout(() => {
+        if (!cloudScan) return;
+        const v = document.getElementById('cloud-video');
+        if (v.videoWidth > 0 && v.readyState >= 2) return;
+        if (tries >= 2) { cloudScanMsg('カメラの映像が出ないときは、下の「📷 写真で読む」で QR を撮ってください'); return; }
+        if (cloudScan.stream) cloudScan.stream.getTracks().forEach(t => t.stop());
+        v.srcObject = null;
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false }).then(st => {
+            if (!cloudScan) { st.getTracks().forEach(t => t.stop()); return; }
+            cloudScan.stream = st; v.muted = true; v.srcObject = st;
+            const p = v.play(); if (p && p.catch) p.catch(() => {});
+            cloudScanWatch(tries + 1);
+        }, () => cloudScanMsg('カメラの映像が出ないときは、下の「📷 写真で読む」で QR を撮ってください'));
+    }, 2500);
+}
+function cloudJsQR(cb) {
+    if (window.jsQR) { cb(); return; }
+    const sc = document.createElement('script'); sc.src = '/kiku990/memo/vendor/jsQR.js'; sc.onload = sc.onerror = () => cb(); document.head.appendChild(sc);
+}
+// 写真で読む：カメラで QR を撮った写真（または保存してある画像）から読む
+function cloudScanPhoto(inp) {
+    const file = inp.files && inp.files[0]; inp.value = '';
+    if (!file || !cloudScan) return;
+    cloudScanMsg('写真から QR を探しています…');
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+        const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height, sc = Math.min(1, 1200 / Math.max(w, h));
+        const c = document.createElement('canvas'); c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+        const x = c.getContext('2d'); x.drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+        cloudJsQR(() => {
+            const r = window.jsQR ? window.jsQR(x.getImageData(0, 0, c.width, c.height).data, c.width, c.height, { inversionAttempts: 'attemptBoth' }) : null;
+            if (r && r.data) { cloudScanFound(r.data); return; }
+            if (cloudScan) cloudScanMsg('写真から QR が見つかりませんでした。QR が大きく写るように撮り直してください');
+        });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); if (cloudScan) cloudScanMsg('写真を読めませんでした'); };
+    img.src = url;
+}
 function cloudStartScan() {
     cloudSetMsg('');
     document.getElementById('cloud-scanner').className = '';
@@ -1507,7 +1549,7 @@ function cloudStartScan() {
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false }).then(stream => {
         if (!cloudScan) { stream.getTracks().forEach(t => t.stop()); return; }
         cloudScan.stream = stream;
-        const v = document.getElementById('cloud-video'); v.srcObject = stream;
+        const v = document.getElementById('cloud-video'); v.muted = true; v.setAttribute('playsinline', ''); v.srcObject = stream; cloudScanWatch(0);
         const p = v.play(); if (p && p.catch) p.catch(() => {});
         if (window.BarcodeDetector) { try { cloudScan.detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { cloudScan.detector = null; } }
         if (cloudScan.detector || window.jsQR) { cloudScanLoop(); return; }
