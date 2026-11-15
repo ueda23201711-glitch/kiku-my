@@ -883,6 +883,7 @@ if (window.navigator.standalone === true && !/[?&]v=/.test(location.search)) { l
             <p id="listen-status-label" style="color:var(--primary); font-weight:bold; font-size:0.9rem; margin:8px 0;">AUTO PLAYING...</p>
             <button class="btn-neutral btn-block" onclick="togglePause()" id="btn-pause">一時停止</button>
             <button class="btn-primary btn-block" style="margin-top:8px" onclick="vpkStart()" id="btn-vpk">🎧 ポケットで聞く（画面を消しても流れる）</button>
+            <div style="margin-top:8px;"><button type="button" id="ls-loop" class="tool-btn" onclick="listenLoopSet()" style="padding:5px 12px; font-size:0.85rem;" title="最後の単語まで行ったら、最初の単語に戻ってくり返す（聞き流し・ポケットで聞く）">🔁 くり返す</button></div>
             <div id="vpk-tempo" data-gap="6r" style="margin-top:8px; font-size:0.82rem; color:#666; display:flex; align-items:center;  flex-wrap:nowrap; white-space:nowrap;"><span style="flex-shrink:0;">テンポ：</span>
                 <button type="button" class="tool-btn" data-t="slow" onclick="vpkTempoSet('slow')" style="padding:4px 6px; flex:1; min-width:0; font-size:0.85rem; text-align:center; justify-content:center;">ゆっくり</button>
                 <button type="button" class="tool-btn" data-t="normal" onclick="vpkTempoSet('normal')" style="padding:4px 6px; flex:1; min-width:0; font-size:0.85rem; text-align:center; justify-content:center;">ふつう</button>
@@ -2805,7 +2806,24 @@ function vpkTempoSet(t) {
     vpkStart();
   } // 聞いている途中なら、今の単語から新しいテンポで流し直す
 }
+// 🔁 くり返す（聞き流し・ポケットで聞く）：最後の単語のあと、最初の単語に戻る。この端末に覚える
+function listenLoop() {
+  return lsGet('listen_loop') === '1';
+}
+function listenLoopSet() {
+  lsSet('listen_loop', listenLoop() ? '0' : '1');
+  vpkTempoUi();
+  if (vpk) {
+    vpkStop();
+    vpkStart();
+  } // ポケットで聞いている途中なら、いまの単語から流し直す
+}
 function vpkTempoUi() {
+  var lb = document.getElementById('ls-loop');
+  if (lb) {
+    lb.className = 'tool-btn' + (listenLoop() ? ' active' : '');
+    lb.textContent = listenLoop() ? '🔁 くり返す：オン' : '🔁 くり返す';
+  }
   document.querySelectorAll('#vpk-tempo button').forEach(function (b) {
     b.className = 'tool-btn' + (b.dataset.t === vpkTempo() ? ' active' : '');
   });
@@ -2863,7 +2881,7 @@ function vpkStart() {
 }
 function _vpkStart() {
   _vpkStart = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2() {
-    var _pr, list, my, startIdx, silence, parts, times, T, fail, done, local, got, next, worker, gp, i, en, ja, a1, a2, pcm, pcm2, url, au, jump, pr, b, _t;
+    var _pr, loopOn, qn, list, my, startIdx, silence, parts, times, T, fail, done, local, got, next, worker, gp, i, en, ja, a1, a2, pcm, pcm2, url, au, jump, pr, b, _t;
     return _regenerator().w(function (_context2) {
       while (1) switch (_context2.n) {
         case 0:
@@ -2906,7 +2924,9 @@ function _vpkStart() {
           } catch (e) {}
           stopAllAudio();
           isPaused = true;
-          list = studyQueue.slice(currentIndex, currentIndex + 200), my = ++vpkGen, startIdx = currentIndex;
+          // 🔁 くり返す：最後まで行ったら最初に戻る並び（いまの単語から、最後→最初→いまの単語の前まで）を 1 本にして、止まらずにくり返す
+          loopOn = listenLoop(), qn = studyQueue.length;
+          list = loopOn ? studyQueue.slice(currentIndex).concat(studyQueue.slice(0, currentIndex)).slice(0, 200) : studyQueue.slice(currentIndex, currentIndex + 200), my = ++vpkGen, startIdx = currentIndex;
           silence = function silence(s) {
             return new Float32Array(Math.round(VPK_RATE * s));
           };
@@ -3037,7 +3057,7 @@ function _vpkStart() {
             for (var _i2 = 0; _i2 < times.length; _i2++) {
               if (times[_i2] <= t + 0.05) k = _i2;else break;
             }
-            var idx = vpk.start + k;
+            var idx = (vpk.start + k) % Math.max(1, studyQueue.length);
             if (idx !== currentIndex && !document.hidden) {
               currentIndex = idx;
               isPaused = true;
@@ -3045,6 +3065,7 @@ function _vpkStart() {
               revealMeaningSilent();
             } else currentIndex = idx;
           };
+          au.loop = loopOn; // くり返すときは、同じ 1 本を頭から流し続ける（画面を消していても止まらない）
           au.onended = function () {
             vpkMsg('🎧 最後まで聞きました。');
             vpkStop();
@@ -3082,7 +3103,7 @@ function _vpkStart() {
           });
           b = document.getElementById('btn-vpk');
           if (b) b.textContent = '■ ポケットで聞くのをやめる';
-          vpkMsg('🎧 ' + list.length + ' 語を流しています。画面を消して、ポケットに入れても大丈夫です。');
+          vpkMsg('🎧 ' + list.length + ' 語を流しています' + (loopOn ? '（🔁 くり返し）' : '') + '。画面を消して、ポケットに入れても大丈夫です。');
         case 16:
           return _context2.a(2);
       }
@@ -3478,6 +3499,11 @@ function renderCard() {
       renderCard();
       return;
     }
+    if (isListeningMode && listenLoop() && studyQueue.length) {
+      currentIndex = 0;
+      renderCard();
+      return;
+    } // 🔁 くり返す：最初の単語へ
     if (isListeningMode) alert("最後まで到達しました。");
     goHome();
     return;
