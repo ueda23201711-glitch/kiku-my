@@ -1936,10 +1936,7 @@ function aiAllItems() {
     return out;
 }
 function aiPre(text, voice) {   // ドライブにあるか確かめ、なければ作って保存する（声そのものは受け取らない）
-    return new Promise(ok => { const go = (n) => gasJsonp({ tts: text, v: voice, pre: '1' }, (d, e) => {
-        if ((!d || (!d.ok && /^(429|5\d\d)/.test(String(d.error || '')))) && n < 2) { setTimeout(() => go(n + 1), 3000); return; }
-        ok(d && d.ok ? (d.made ? 'made' : 'has') : { e: (d && d.error) || e || 'error' });
-    }); go(0); });
+    return new Promise(ok => gasJsonp({ tts: text, v: voice, pre: '1' }, (d, e) => ok(d && d.ok ? (d.made ? 'made' : 'has') : { e: (d && d.error) || e || 'error' })));
 }
 async function aiAllRun(mode) {
     const bm = document.getElementById('aiall-make'), bg = document.getElementById('aiall-get'), msg = t => { const el = document.getElementById('aiall-msg'); if (el) el.textContent = t; };
@@ -1963,22 +1960,33 @@ async function aiAllRun(mode) {
     }
     const my = ++aiAllGen, btn = mode === 'make' ? bm : bg;
     btn.dataset.run = '1'; btn.textContent = '■ やめる';
-    let done = 0, made = 0, had = 0, fail = '', nf = 0, next = 0;
-    const show = () => msg((mode === 'make' ? '☁ ドライブに用意しています… ' : '📥 この端末に入れています… ') + done + ' / ' + todo.length
-        + (mode === 'make' ? '（新しく作った ' + made + '・もうあった ' + had + '）' : '') + (skip ? '\nこの端末にあった ' + skip + ' 個は飛ばしました。' : '') + (nf ? '\nできなかった ' + nf + ' 個（' + fail + '）' : '') + '\n画面を開いたままにしてください。');
-    const worker = async () => {
-        while (next < todo.length && my === aiAllGen) {
-            const x = todo[next++];
-            if (mode === 'make') { const r = await aiPre(x.t, x.v); if (r === 'made') made++; else if (r === 'has') had++; else { nf++; fail = r.e; } }
-            else { const r = await vpkGet(x.t, x.v); if (!r || !r.b) { nf++; fail = (r && r.e) || 'error'; } }
-            done++; if (my === aiAllGen) show();
-            if (nf >= 5 && nf === done) { aiAllGen++; break; }   // 最初から全部失敗：設定のまちがい
-        }
-    };
+    // 1 個ずつ順番に。Azure の無料枠（F0）は 1 分に 20 回までなので、新しく作ったら 3 秒あける。
+    // 届かない・混んでいるときは、少し待って 3 回までやり直す。3 個続けてだめなら、いったん止める（できた分は保存済み）
+    let done = 0, made = 0, had = 0, fail = '', nf = 0, run = 0;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const show = (w) => msg((mode === 'make' ? '☁ ドライブに用意しています… ' : '📥 この端末に入れています… ') + done + ' / ' + todo.length
+        + (mode === 'make' ? '（新しく作った ' + made + '・もうあった ' + had + '）' : '') + (skip ? '\nこの端末にあった ' + skip + ' 個は飛ばしました。' : '') + (nf ? '\nできなかった ' + nf + ' 個（' + fail + '）' : '')
+        + (w ? '\n' + w : '') + '\n画面を開いたままにしてください。');
     show();
-    await Promise.all([worker(), worker(), worker()]);
+    for (let i = 0; i < todo.length && my === aiAllGen; i++) {
+        const x = todo[i]; let ok = false, r = null;
+        for (let t = 0; t < 4 && my === aiAllGen; t++) {
+            if (t) { const w = [0, 5, 15, 40][t]; show('混んでいるか、届きませんでした（' + fail + '）。' + w + ' 秒待って、やり直します…'); await sleep(w * 1000); if (my !== aiAllGen) break; }
+            if (mode === 'make') { r = await aiPre(x.t, x.v); ok = r === 'made' || r === 'has'; if (!ok) fail = r.e; }
+            else { r = await vpkGet(x.t, x.v); ok = !!(r && r.b); if (!ok) fail = (r && r.e) || 'error'; }
+            if (ok || /noazkey|azkey|nokey|APP_TOKEN|Nanami|voice/i.test(fail)) break;   // 設定のまちがいは、やり直しても同じ
+        }
+        if (my !== aiAllGen) break;
+        done++;
+        if (ok) { run = 0; if (r === 'made') made++; else if (r === 'has') had++; }
+        else { nf++; run++; }
+        show();
+        if (run >= 3) { aiAllGen++; break; }
+        if (ok && (r === 'made' || (mode === 'get' && !r.local))) await sleep(mode === 'make' ? 3100 : 300);
+    }
     if (btn.dataset.run !== '1') return;   // 途中でやめた
     delete btn.dataset.run; btn.textContent = mode === 'make' ? '☁ ① 全部の単語の AI の声をドライブに作る' : '📥 ② AI の声をこの端末に入れる';
+    if (run >= 3 && done > nf) { msg('⏸ 途中で止まりました（' + done + ' / ' + todo.length + '、' + fail + '）。できた分は保存してあります。\n少し時間をおいて、もう一度押すと続きから進みます。' + (/^(net|timeout)$/.test(fail) ? '\n何度も止まるときは、会社のネットワークなどで Apps Script への接続が止められているかもしれません。家のネットワークで試してみてください。' : '')); return; }
     if (nf && nf === done) { msg('声を用意できませんでした（' + fail + '）。' + (/noazkey|azkey/.test(fail) ? 'Apps Script に Azure の声の設定（AZURE_KEY）が必要です。' : /Nanami|voice/i.test(fail) ? 'Apps Script のコードを新しいものに貼り替えてください。'
         : /^(net|timeout)$/.test(fail) ? '\nApps Script に届きませんでした。英文リーダーの「⚙ 翻訳の設定」の「テストして保存」が成功するか確かめてください。成功するのにここだけ失敗するときは、ブラウザの「追跡防止」が「厳重」になっていないか（Edge の設定 →「プライバシー、検索、サービス」）、会社のネットワークで止められていないかを確かめてください。'
         : /APP_TOKEN/.test(fail) ? 'Apps Script の合言葉が合いません。英文リーダーの「⚙ 翻訳の設定」で「テストして保存」をもう一度押してください。' : '')); return; }
