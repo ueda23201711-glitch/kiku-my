@@ -670,6 +670,14 @@
             </div>
         </div>
 
+        <div class="panel" id="aiall-panel">
+            <div style="font-weight:700; color:#444; margin-bottom:6px;">AI の声（Ava・Nanami）を前もって用意する</div>
+            <div style="font-size:0.8rem; color:#777; line-height:1.6; margin-bottom:8px;">AI の声は一度作るとドライブに保存され、どの端末からも使えます。パソコンで「① 作る」をしておき、スマホで「② この端末に入れる」をすると、スマホでもすぐに AI の声で読みます（電波がなくても）。</div>
+            <button class="btn-outline btn-block" id="aiall-make" onclick="aiAllRun('make')">☁ ① 全部の単語の AI の声をドライブに作る</button>
+            <button class="btn-outline btn-block" id="aiall-get" onclick="aiAllRun('get')" style="margin-top:6px;">📥 ② AI の声をこの端末に入れる</button>
+            <div id="aiall-msg" style="font-size:0.82rem; color:#555; margin-top:6px; line-height:1.5; white-space:pre-wrap;"></div>
+        </div>
+
         <div class="panel" id="cloud-panel">
             <div style="font-weight:700; color:#444; margin-bottom:6px;">単語データ（クラウド）</div>
             <div id="cloud-status" style="font-size:0.85rem; color:#555; line-height:1.6; margin-bottom:8px;"></div>
@@ -1917,6 +1925,63 @@ const VPK_STORE = 'vpk-tts-v1';
 function vpkKey(text, voice) { return new Request(location.origin + '/__vpk__/' + voice + '/' + encodeURIComponent(text)); }
 function vpkCacheGet(text, voice) { try { return caches.open(VPK_STORE).then(c => c.match(vpkKey(text, voice))).then(r => r ? r.arrayBuffer() : null).catch(() => null); } catch (e) { return Promise.resolve(null); } }
 function vpkCachePut(text, voice, buf) { try { caches.open(VPK_STORE).then(c => c.put(vpkKey(text, voice), new Response(buf.slice(0)))).catch(() => {}); } catch (e) {} }
+// ── 全部の単語の AI の声を、前もって作る（① ドライブに作る：パソコン向け）・この端末に入れる（② スマホ向け） ──
+let aiAllGen = 0;
+function aiAllItems() {
+    const out = [], seen = {};
+    words.forEach(it => {
+        const add = (t, v) => { t = String(t || '').trim(); if (!t || t === '…') return; const k = v + '|' + t; if (seen[k]) return; seen[k] = 1; out.push({ t: t, v: v }); };
+        add(it.w, VPK_EN); add(shortMean(it.m), VPK_JA);
+    });
+    return out;
+}
+function aiPre(text, voice) {   // ドライブにあるか確かめ、なければ作って保存する（声そのものは受け取らない）
+    return new Promise(ok => { const go = (n) => gasJsonp({ tts: text, v: voice, pre: '1' }, (d, e) => {
+        if ((!d || (!d.ok && /^(429|5\d\d)/.test(String(d.error || '')))) && n < 2) { setTimeout(() => go(n + 1), 3000); return; }
+        ok(d && d.ok ? (d.made ? 'made' : 'has') : { e: (d && d.error) || e || 'error' });
+    }); go(0); });
+}
+async function aiAllRun(mode) {
+    const bm = document.getElementById('aiall-make'), bg = document.getElementById('aiall-get'), msg = t => { const el = document.getElementById('aiall-msg'); if (el) el.textContent = t; };
+    if (bm.dataset.run || bg.dataset.run) {   // 動いている途中：止める
+        aiAllGen++; delete bm.dataset.run; delete bg.dataset.run;
+        bm.textContent = '☁ ① 全部の単語の AI の声をドライブに作る'; bg.textContent = '📥 ② AI の声をこの端末に入れる'; msg('途中でやめました。もう一度押すと、続きから進みます（できた分はそのまま使えます）。'); return;
+    }
+    await gasEnsure();
+    if (!gasUrlK()) { msg('AI の声を作るには、英文リーダーの「⚙ 翻訳の設定」で Apps Script を設定してください（Azure の声を使います）。'); return; }
+    if (navigator.onLine === false) { msg('ネットにつながっていません。'); return; }
+    let items = aiAllItems();
+    if (!items.length) { msg('単語がありません。'); return; }
+    // この端末に入っている声は飛ばす（② は端末にない分だけ。① も、端末にある声はドライブにもあるので飛ばす）
+    msg('この端末にある声を調べています…');
+    const have = await Promise.all(items.map(x => vpkCacheGet(x.t, x.v).then(b => !!b)));
+    const todo = items.filter((x, i) => !have[i]), skip = items.length - todo.length;
+    if (!todo.length) { msg('✅ 全部の声（' + items.length + ' 個）が、もうこの端末に入っています。'); return; }
+    if (mode === 'make') {
+        let ch = 0; todo.forEach(x => { ch += x.t.length; });
+        if (!confirm('単語と訳の声 ' + todo.length + ' 個を、ドライブに用意します（もうドライブにある声は作り直しません）。\n新しく作る声は、多くても約 ' + ch.toLocaleString() + ' 文字分です（Azure の無料枠は 1 か月 50 万文字）。\n\n途中で止めても、できた分は使えます。始めますか？')) return;
+    }
+    const my = ++aiAllGen, btn = mode === 'make' ? bm : bg;
+    btn.dataset.run = '1'; btn.textContent = '■ やめる';
+    let done = 0, made = 0, had = 0, fail = '', nf = 0, next = 0;
+    const show = () => msg((mode === 'make' ? '☁ ドライブに用意しています… ' : '📥 この端末に入れています… ') + done + ' / ' + todo.length
+        + (mode === 'make' ? '（新しく作った ' + made + '・もうあった ' + had + '）' : '') + (skip ? '\nこの端末にあった ' + skip + ' 個は飛ばしました。' : '') + (nf ? '\nできなかった ' + nf + ' 個（' + fail + '）' : '') + '\n画面を開いたままにしてください。');
+    const worker = async () => {
+        while (next < todo.length && my === aiAllGen) {
+            const x = todo[next++];
+            if (mode === 'make') { const r = await aiPre(x.t, x.v); if (r === 'made') made++; else if (r === 'has') had++; else { nf++; fail = r.e; } }
+            else { const r = await vpkGet(x.t, x.v); if (!r || !r.b) { nf++; fail = (r && r.e) || 'error'; } }
+            done++; if (my === aiAllGen) show();
+            if (nf >= 5 && nf === done) { aiAllGen++; break; }   // 最初から全部失敗：設定のまちがい
+        }
+    };
+    show();
+    await Promise.all([worker(), worker(), worker()]);
+    if (btn.dataset.run !== '1') return;   // 途中でやめた
+    delete btn.dataset.run; btn.textContent = mode === 'make' ? '☁ ① 全部の単語の AI の声をドライブに作る' : '📥 ② AI の声をこの端末に入れる';
+    if (nf && nf === done) { msg('声を用意できませんでした（' + fail + '）。' + (/noazkey|azkey/.test(fail) ? 'Apps Script に Azure の声の設定（AZURE_KEY）が必要です。' : /Nanami|voice/i.test(fail) ? 'Apps Script のコードを新しいものに貼り替えてください。' : '')); return; }
+    msg('✅ ' + (mode === 'make' ? 'ドライブに用意しました（新しく作った ' + made + '・もうあった ' + had + '）。スマホでは「📥 ② AI の声をこの端末に入れる」を押してください。' : 'この端末に入れました（' + (done - nf) + ' 個）。これからは、すぐに AI の声で読みます。') + (nf ? '\nできなかった ' + nf + ' 個は、もう一度押すと続きを試します（' + fail + '）。' : ''));
+}
 function vpkGet(text, voice) {
     return vpkCacheGet(text, voice).then(b => b ? { b: b, local: 1 } : new Promise(ok => vpkTts(text, voice, (buf, e) => { if (buf) vpkCachePut(text, voice, buf); ok({ b: buf, e: e }); })));
 }
