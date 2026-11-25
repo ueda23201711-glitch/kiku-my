@@ -2991,7 +2991,7 @@ function _aiAllRun() {
             _context2.n = 11;
             break;
           }
-          msg('声を用意できませんでした（' + fail + '）。' + (/noazkey|azkey/.test(fail) ? 'Apps Script に Azure の声の設定（AZURE_KEY）が必要です。' : /Nanami|voice/i.test(fail) ? 'Apps Script のコードを新しいものに貼り替えてください。' : ''));
+          msg('声を用意できませんでした（' + fail + '）。' + (/noazkey|azkey/.test(fail) ? 'Apps Script に Azure の声の設定（AZURE_KEY）が必要です。' : /Nanami|voice/i.test(fail) ? 'Apps Script のコードを新しいものに貼り替えてください。' : /^(net|timeout)$/.test(fail) ? '\nApps Script に届きませんでした。英文リーダーの「⚙ 翻訳の設定」の「テストして保存」が成功するか確かめてください。成功するのにここだけ失敗するときは、ブラウザの「追跡防止」が「厳重」になっていないか（Edge の設定 →「プライバシー、検索、サービス」）、会社のネットワークで止められていないかを確かめてください。' : /APP_TOKEN/.test(fail) ? 'Apps Script の合言葉が合いません。英文リーダーの「⚙ 翻訳の設定」で「テストして保存」をもう一度押してください。' : ''));
           return _context2.a(2);
         case 11:
           msg('✅ ' + (mode === 'make' ? 'ドライブに用意しました（新しく作った ' + made + '・もうあった ' + had + '）。スマホでは「📥 ② AI の声をこの端末に入れる」を押してください。' : 'この端末に入れました（' + (done - nf) + ' 個）。これからは、すぐに AI の声で読みます。') + (nf ? '\nできなかった ' + nf + ' 個は、もう一度押すと続きを試します（' + fail + '）。' : ''));
