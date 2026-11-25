@@ -2708,6 +2708,7 @@ function gasUrlK() {
   } catch (e) {}
   return /^https:\/\//.test(u) ? u : '';
 }
+var gasViaScript = false; // ふつうの通信が使えず、JSONP なら届いた端末：次からは JSONP で
 function gasJsonp(params, cb) {
   var url = gasUrlK();
   if (!url) {
@@ -2736,14 +2737,42 @@ function gasJsonp(params, cb) {
     var qs = Object.keys(params).map(function (k) {
       return k + '=' + encodeURIComponent(params[k]);
     }).join('&');
-    sc.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + (tk ? 'tk=' + tk + '&' : '') + qs + '&callback=' + name;
-    sc.onerror = function () {
-      return fin(null, 'net');
+    var base = url + (url.indexOf('?') >= 0 ? '&' : '?') + (tk ? 'tk=' + tk + '&' : '') + qs;
+    var viaScript = function viaScript(afterFetch) {
+      if (afterFetch) window[name] = function (d) {
+        gasViaScript = true;
+        fin(d, null);
+      };
+      sc.src = base + '&callback=' + name;
+      sc.onerror = function () {
+        return fin(null, 'net');
+      };
+      setTimeout(function () {
+        return fin(null, 'timeout');
+      }, 90000);
+      document.head.appendChild(sc);
     };
-    setTimeout(function () {
-      return fin(null, 'timeout');
-    }, 90000);
-    document.head.appendChild(sc);
+    // ふつうの通信（英文リーダーと同じ）で頼む。だめなときだけ、<script> で読む方式（JSONP）にする
+    // （Edge などで、<script> の方式だけが止められることがある）
+    if (!window.fetch || gasViaScript) {
+      viaScript();
+      return;
+    }
+    var ac = window.AbortController ? new AbortController() : null,
+      to = setTimeout(function () {
+        if (ac) ac.abort();
+      }, 90000);
+    fetch(base, ac ? {
+      signal: ac.signal
+    } : {}).then(function (r) {
+      return r.ok ? r.json() : Promise.reject(r.status);
+    }).then(function (d) {
+      clearTimeout(to);
+      fin(d, null);
+    }).catch(function () {
+      clearTimeout(to);
+      if (!done) viaScript(true);
+    });
   };
   if (!key || !window.crypto || !crypto.subtle) {
     go('');

@@ -1903,6 +1903,7 @@ function gasEnsure() {
     }));
 }
 function gasUrlK() { let u = ''; try { u = localStorage.getItem('eibun_gas') || ''; } catch (e) {} return /^https:\/\//.test(u) ? u : ''; }
+let gasViaScript = false;   // ふつうの通信が使えず、JSONP なら届いた端末：次からは JSONP で
 function gasJsonp(params, cb) {
     const url = gasUrlK(); if (!url) { cb(null, 'nogas'); return; }
     const key = cloudKey();
@@ -1912,10 +1913,20 @@ function gasJsonp(params, cb) {
         const fin = (d, e) => { if (done) return; done = true; try { delete window[name]; } catch (x) { window[name] = undefined; } if (sc.parentNode) sc.parentNode.removeChild(sc); cb(d, e); };
         window[name] = (d) => fin(d, null);
         const qs = Object.keys(params).map(k => k + '=' + encodeURIComponent(params[k])).join('&');
-        sc.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + (tk ? 'tk=' + tk + '&' : '') + qs + '&callback=' + name;
-        sc.onerror = () => fin(null, 'net');
-        setTimeout(() => fin(null, 'timeout'), 90000);
-        document.head.appendChild(sc);
+        const base = url + (url.indexOf('?') >= 0 ? '&' : '?') + (tk ? 'tk=' + tk + '&' : '') + qs;
+        const viaScript = (afterFetch) => {
+            if (afterFetch) window[name] = (d) => { gasViaScript = true; fin(d, null); };
+            sc.src = base + '&callback=' + name;
+            sc.onerror = () => fin(null, 'net');
+            setTimeout(() => fin(null, 'timeout'), 90000);
+            document.head.appendChild(sc);
+        };
+        // ふつうの通信（英文リーダーと同じ）で頼む。だめなときだけ、<script> で読む方式（JSONP）にする
+        // （Edge などで、<script> の方式だけが止められることがある）
+        if (!window.fetch || gasViaScript) { viaScript(); return; }
+        const ac = window.AbortController ? new AbortController() : null, to = setTimeout(() => { if (ac) ac.abort(); }, 90000);
+        fetch(base, ac ? { signal: ac.signal } : {}).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(d => { clearTimeout(to); fin(d, null); })
+            .catch(() => { clearTimeout(to); if (!done) viaScript(true); });
     };
     if (!key || !window.crypto || !crypto.subtle) { go(''); return; }
     crypto.subtle.digest('SHA-256', new TextEncoder().encode('tegaki-gas|' + key)).then(h => go(Array.prototype.map.call(new Uint8Array(h), b => ('0' + b.toString(16)).slice(-2)).join('').slice(0, 32))).catch(() => go(''));
